@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Your Custom Itinerary</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="form-card">
+            <h1 class="form-title">Create Your Custom Itinerary</h1>
+            
+            <form id="itineraryForm">
+                <!-- Destination -->
+                <div class="form-group">
+                    <label class="form-label">
+                        <span class="icon">🌍</span>
+                        Where Are You Traveling? <span class="required">*</span>
+                    </label>
+                    <input 
+                        type="text" 
+                        id="destination" 
+                        class="form-input" 
+                        placeholder="Enter Your Destination City (Or Cities)."
+                        required
+                        list="destination-suggestions"
+                    >
+                    <datalist id="destination-suggestions">
+                        <option value="Bali">
+                        <option value="Paris">
+                        <option value="Tokyo">
+                        <option value="New York">
+                        <option value="London">
+                    </datalist>
+                </div>
+
+                <!-- Budget Slider -->
+                <div class="form-group">
+                    <label class="form-label">
+                        <span class="icon">💰</span>
+                        Set Your Budget And Preferences. <span class="required">*</span>
+                    </label>
+                    <div class="budget-slider-container">
+                        <div class="budget-value" id="budgetValue">$ 3000</div>
+                        <input 
+                            type="range" 
+                            id="budget" 
+                            class="budget-slider" 
+                            min="0" 
+                            max="6000" 
+                            value="3000" 
+                            step="100"
+                        >
+                        <div class="budget-labels">
+                            <span>$ 0</span>
+                            <span>$ 2000</span>
+                            <span>$ 4000</span>
+                            <span>$ 6000</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Activity Preference -->
+                <div class="form-group">
+                    <label class="form-label">
+                        <span class="icon">📊</span>
+                        What Type Of Activities Would You Prefer? <span class="required">*</span>
+                    </label>
+                    <div class="activity-buttons">
+                        <button type="button" class="activity-btn active" data-value="relaxed">
+                            <span class="activity-icon">🏖️</span>
+                            Relaxed Vibe
+                        </button>
+                        <button type="button" class="activity-btn" data-value="moderate">
+                            <span class="activity-icon">🚶</span>
+                            Moderate Adrenaline
+                        </button>
+                        <button type="button" class="activity-btn" data-value="high">
+                            <span class="activity-icon">🔥</span>
+                            High Adrenaline
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Additional Trip Details -->
+                <div class="form-group">
+                    <label class="form-label">
+                        <span class="icon">📝</span>
+                        Add Additional Trip Details. <span class="required">*</span>
+                    </label>
+                    <div class="checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="includeFlights">
+                            <span>Include Flights</span>
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="includeHotels">
+                            <span>Include Hotels</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Duration and Travelers -->
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">
+                            <span class="icon">🗓️</span>
+                            Select Your Trip Duration <span class="required">*</span>
+                        </label>
+                        <select id="duration" class="form-select" required>
+                            <option value="">Select duration</option>
+                            <option value="1">1 Day</option>
+                            <option value="2">2 Days</option>
+                            <option value="3">3 Days</option>
+                            <option value="4">4 Days</option>
+                            <option value="5" selected>5 Days</option>
+                            <option value="6">6 Days</option>
+                            <option value="7">7 Days</option>
+                            <option value="10">10 Days</option>
+                            <option value="14">14 Days</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">
+                            <span class="icon">👥</span>
+                            How Many Travelers Are Joining? <span class="required">*</span>
+                        </label>
+                        <select id="travelers" class="form-select" required>
+                            <option value="">Select travelers</option>
+                            <option value="1">Solo Trip</option>
+                            <option value="2" selected>2 Adults</option>
+                            <option value="3">3 People</option>
+                            <option value="4">4 People</option>
+                            <option value="5">5+ People</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Submit Button -->
+                <button type="submit" class="submit-btn" id="submitBtn">
+                    <span>Create My Itinerary</span>
+                    <span class="arrow">→</span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Loading Modal -->
+    <div id="loadingModal" class="modal">
+        <div class="modal-content loading-content">
+            <div class="spinner"></div>
+            <p>Creating your perfect itinerary...</p>
+        </div>
+    </div>
+
+    <!-- Budget Warning Modal -->
+    <div id="budgetModal" class="modal">
+        <div class="modal-content budget-modal">
+            <h2>⚠️ Budget Adjustment Needed</h2>
+            <p id="budgetMessage"></p>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="closeBudgetModal()">Cancel</button>
+                <button class="btn-primary" onclick="adjustBudget()">Adjust Budget</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

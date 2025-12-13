@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Travel Itinerary</title>
+    <link rel="stylesheet" href="/static/css/itinerary.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <style>
+        /* Video Generation Section */
+        .video-section {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin: 30px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .video-section h2 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            color: #1a202c;
+        }
+        
+        .video-subtitle {
+            color: #718096;
+            margin-bottom: 25px;
+        }
+        
+        .photo-upload-container {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 20px;
+            padding: 20px;
+            background: #f7fafc;
+            border-radius: 8px;
+            border: 2px dashed #cbd5e0;
+        }
+        
+        .upload-preview {
+            width: 120px;
+            height: 120px;
+            border-radius: 8px;
+            object-fit: cover;
+            display: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        
+        .upload-info {
+            flex: 1;
+        }
+        
+        .upload-label {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s;
+            font-weight: 600;
+        }
+        
+        .upload-label:hover {
+            transform: translateY(-2px);
+        }
+        
+        #photoUpload {
+            display: none;
+        }
+        
+        .upload-status {
+            margin-top: 10px;
+            color: #4a5568;
+        }
+        
+        .generate-video-btn {
+            width: 100%;
+            padding: 18px;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(245, 87, 108, 0.3);
+        }
+        
+        .generate-video-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(245, 87, 108, 0.4);
+        }
+        
+        .generate-video-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        /* Activity photos */
+        .activity-photo {
+            width: 100%;
+            max-height: 200px;
+            object-fit: cover;
+            border-radius: 8px;
+            margin-top: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+        
+        .activity-photo:hover {
+            transform: scale(1.02);
+        }
+        
+        .attraction-image {
+            width: 100%;
+            max-height: 250px;
+            object-fit: cover;
+            border-radius: 8px;
+            margin-top: 15px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .attraction-images-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .attraction-images-grid img {
+            width: 100%;
+            height: 120px;
+            object-fit: cover;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .attraction-images-grid img:hover {
+            transform: scale(1.05);
+        }
+
+        /* PDF Download Button */
+        .download-pdf-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 14px 28px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .download-pdf-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+        }
+
+        .download-pdf-btn:active {
+            transform: translateY(0);
+        }
+
+        .download-pdf-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .download-icon {
+            font-size: 20px;
+        }
+
+        /* Hide elements when generating PDF */
+        @media print {
+            .chat-toggle-btn,
+            .chat-window,
+            .download-pdf-btn,
+            .video-section {
+                display: none !important;
+            }
+        }
+
+        .pdf-generating {
+            pointer-events: none;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <!-- PDF Download Button -->
+    <button class="download-pdf-btn" id="downloadPdfBtn" onclick="downloadItineraryAsPDF()">
+        <span class="download-icon">📥</span>
+        <span>Download PDF</span>
+    </button>
+
+    <div class="itinerary-container" id="itineraryContent">
+        <!-- Header -->
+        <div class="header-section">
+            <div class="header-badge" id="headerBadge">
+                ⭐ 5 DAY BALI ITINERARY
+            </div>
+            <div class="trip-details-card">
+                <h2>Confirm Your Trip Details</h2>
+                <p class="subtitle">Please Review Your Trip Details Before Booking.</p>
+                <div class="details-grid">
+                    <div class="detail-item">
+                        <span class="detail-icon">🌍</span>
+                        <div>
+                            <div class="detail-label">Destination</div>
+                            <div class="detail-value" id="detailDestination">Paris, France</div>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-icon">💰</span>
+                        <div>
+                            <div class="detail-label">Total Budget</div>
+                            <div class="detail-value" id="detailBudget">$3,500</div>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-icon">📅</span>
+                        <div>
+                            <div class="detail-label">Duration</div>
+                            <div class="detail-value" id="detailDuration">5 Days</div>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-icon">👥</span>
+                        <div>
+                            <div class="detail-label">Travelers</div>
+                            <div class="detail-value" id="detailTravelers">2 Adults</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Daily Activities -->
+        <div class="activities-section" id="activitiesSection">
+            <!-- Activities will be dynamically inserted here -->
+        </div>
+
+        <!-- Video Generation Section -->
+        <div class="video-section">
+            <h2>🎥 Generate Your Travel Video</h2>
+            <p class="video-subtitle">Create an AI-powered video showcasing your entire itinerary</p>
+            
+            <div class="photo-upload-container">
+                <img id="uploadPreview" class="upload-preview" alt="Your photo">
+                <div class="upload-info">
+                    <label for="photoUpload" class="upload-label">
+                        📸 Upload Your Photo
+                    </label>
+                    <input type="file" id="photoUpload" accept="image/*" onchange="handlePhotoUpload(event)">
+                    <p class="upload-status" id="uploadStatus">Upload a photo of yourself to appear in the video</p>
+                </div>
+            </div>
+            
+            <button class="generate-video-btn" id="generateVideoBtn" onclick="generateVideo()" disabled>
+                🎬 Generate Video (Coming Soon)
+            </button>
+        </div>
+
+        <!-- Budget Breakdown -->
+        <div class="budget-section">
+            <div class="budget-card">
+                <h2>Your Budget Breakdown</h2>
+                
+                <div class="budget-chart-container">
+                    <canvas id="budgetChart"></canvas>
+                </div>
+
+                <div class="budget-details">
+                    <div class="budget-row">
+                        <div class="budget-item">
+                            <span class="budget-icon">✈️</span>
+                            <span>Flights</span>
+                        </div>
+                        <div class="budget-amount" id="budgetFlights">$ 5,000</div>
+                    </div>
+                    <div class="budget-row">
+                        <div class="budget-item">
+                            <span class="budget-icon">🍔</span>
+                            <span>Food</span>
+                        </div>
+                        <div class="budget-amount" id="budgetFood">$ 5,000</div>
+                    </div>
+                    <div class="budget-row">
+                        <div class="budget-item">
+                            <span class="budget-icon">🏨</span>
+                            <span>Hotels</span>
+                        </div>
+                        <div class="budget-amount" id="budgetHotels">$ 5,000</div>
+                    </div>
+                    <div class="budget-row">
+                        <div class="budget-item">
+                            <span class="budget-icon">🚗</span>
+                            <span>Travel</span>
+                        </div>
+                        <div class="budget-amount" id="budgetTravel">$ 5,000</div>
+                    </div>
+                    <div class="budget-row">
+                        <div class="budget-item">
+                            <span class="budget-icon">🎭</span>
+                            <span>Activities</span>
+                        </div>
+                        <div class="budget-amount" id="budgetActivities">$ 5,000</div>
+                    </div>
+                </div>
+
+                <div class="budget-total">
+                    <div class="total-label">💰 Total Estimation</div>
+                    <div class="total-amount" id="totalEstimation">$ 13,000</div>
+                </div>
+
+                <div class="budget-remaining">
+                    <div class="remaining-label">Remaining Budget</div>
+                    <div class="remaining-amount" id="remainingBudget">$ 2000</div>
+                </div>
+
+                <div class="reallocation-section">
+                    <h3>🔥 Use Your Remaining Balance</h3>
+                    <div class="reallocation-options">
+                        <label class="reallocation-checkbox">
+                            <input type="checkbox" value="flights">
+                            <span class="checkbox-icon">✈️</span>
+                            <span>Flights</span>
+                        </label>
+                        <label class="reallocation-checkbox">
+                            <input type="checkbox" value="food">
+                            <span class="checkbox-icon">🍔</span>
+                            <span>Food</span>
+                        </label>
+                        <label class="reallocation-checkbox">
+                            <input type="checkbox" value="activities">
+                            <span class="checkbox-icon">🎭</span>
+                            <span>Activities</span>
+                        </label>
+                        <label class="reallocation-checkbox">
+                            <input type="checkbox" value="travel">
+                            <span class="checkbox-icon">🚗</span>
+                            <span>Travel</span>
+                        </label>
+                        <label class="reallocation-checkbox">
+                            <input type="checkbox" value="hotels">
+                            <span class="checkbox-icon">🏨</span>
+                            <span>Hotels</span>
+                        </label>
+                    </div>
+                    <button class="reallocate-btn" onclick="reallocateBudget()">
+                        Reallocate Budget
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Attractions & Activities -->
+        <div class="attractions-section">
+            <div class="attractions-grid">
+                <div class="attraction-card">
+                    <h3>Attractions</h3>
+                    <p class="attraction-description" id="attractionsDescription">
+                        Discover The Best Attractions That Capture The Essence Of Your Destination.
+                    </p>
+                    <ul class="attraction-list" id="attractionsList"></ul>
+                    <img src="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=300&fit=crop" alt="Attractions" class="attraction-image" id="attractionImage" onerror="this.style.display='none'">
+                    <div class="attraction-images-grid" id="attractionImagesGrid"></div>
+                </div>
+
+                <div class="attraction-card">
+                    <h3>Activities</h3>
+                    <p class="attraction-description" id="activitiesDescription">
+                        Discover The Best Activities For Your Destination.
+                    </p>
+                    <ul class="attraction-list" id="activitiesList"></ul>
+                    <img src="https://images.unsplash.com/photo-1527631746610-bca00a040d60?w=400&h=300&fit=crop" alt="Activities" class="attraction-image" id="activityImage" onerror="this.style.display='none'">
+                    <div class="attraction-images-grid" id="activityImagesGrid"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chat Button -->
+    <button class="chat-toggle-btn" onclick="toggleChat()">
+        <span class="chat-icon">💬</span>
+        <span class="chat-text">AI Itinerary Helper</span>
+    </button>
+
+    <!-- Chat Window -->
+    <div class="chat-window" id="chatWindow">
+        <div class="chat-header">
+            <div class="chat-header-content">
+                <span class="chat-bot-icon">🤖</span>
+                <div>
+                    <h3>Chat With Ai</h3>
+                    <span class="chat-status">● Online</span>
+                </div>
+            </div>
+            <div class="chat-actions">
+                <button onclick="minimizeChat()" class="chat-action-btn">—</button>
+                <button onclick="toggleChat()" class="chat-action-btn">✕</button>
+            </div>
+        </div>
+        
+        <div class="chat-messages" id="chatMessages">
+            <div class="chat-message bot-message">
+                <div class="message-avatar">🤖</div>
+                <div class="message-content">
+                    👋 Hi! I'm your travel assistant. I can help you modify your itinerary, answer questions about your trip, or provide destination information. What would you like to know?
+                </div>
+            </div>
+        </div>
+
+        <div class="chat-input-container">
+            <input 
+                type="text" 
+                id="chatInput" 
+                class="chat-input" 
+                placeholder="Type A Message"
+                onkeypress="handleChatKeyPress(event)"
+            >
+            <button onclick="sendMessage()" class="chat-send-btn">➤</button>
+        </div>
+    </div>
+
+    <!-- Loading Modal -->
+    <div id="loadingModal" class="modal">
+        <div class="modal-content loading-content">
+            <div class="spinner"></div>
+            <p>Processing your request...</p>
+        </div>
+    </div>
+
+    <script>
+        // Get itinerary ID from URL
+        const pathSegments = window.location.pathname.split('/');
+        const itineraryId = pathSegments[pathSegments.length - 1];
+        console.log('🆔 Itinerary ID:', itineraryId);
+        
+        // Store uploaded photo
+        let uploadedPhotoFilename = null;
+    </script>
+    <script src="/static/js/itinerary.js"></script>
+</body>
+</html>
