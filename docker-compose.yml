@@ -1,0 +1,32 @@
+version: '3.9'
+
+services:
+  travel-itinerary-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: travel-itinerary-api
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Persist uploaded files and generated videos
+      - ./uploads:/app/uploads
+      - ./videos:/app/videos
+      # Persist SQLite database
+      - ./video_db.sqlite:/app/video_db.sqlite
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# Optional: Add volumes for persistent data
+volumes:
+  uploads:
+  videos:

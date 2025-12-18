@@ -1,9 +1,11 @@
 """
 Video Generation Service using KIE AI API (Google Veo 3.1)
 
-REDESIGNED APPROACH:
-- Generate ONE video per day with user + day's location photos
-- Use simple, effective prompts for realistic travel videos
+OPTIMIZED APPROACH:
+- Generate ONE video per day using ONLY user photos
+- Create hyper-specific prompts based on ACTUAL daily activities
+- Show what the user is DOING, not just describing scenes
+- Focus on user's actions, emotions, and journey through the day
 - Merge all day videos into final video using moviepy
 """
 
@@ -29,50 +31,25 @@ class VideoGenerationService:
         }
     
     def upload_file_to_kie(self, local_file_path: str) -> Optional[str]:
-        """
-        Upload a local file to KIE AI and get a public URL.
-        
-        Files are temporary and automatically deleted after 3 days.
-        
-        Args:
-            local_file_path: Path to local file (e.g., /path/to/photo.jpg)
-            
-        Returns:
-            Public URL of uploaded file, or None if upload fails
-        """
+        """Upload a local file to KIE AI and get a public URL."""
         try:
-            import os
-            
             if not os.path.exists(local_file_path):
                 logger.error(f"❌ File not found: {local_file_path}")
                 return None
             
-            # Get filename
             filename = os.path.basename(local_file_path)
-            
             logger.info(f"📤 Uploading file to KIE AI: {filename}")
             
-            # Prepare multipart form data
             with open(local_file_path, 'rb') as f:
-                files = {
-                    'file': (filename, f, 'image/jpeg')
-                }
-                
-                # Add uploadPath as form data (required by KIE AI)
-                data = {
-                    'uploadPath': 'travel-videos'  # Organize uploads in folder
-                }
-                
-                headers = {
-                    "Authorization": f"Bearer {self.api_key}"
-                    # Don't set Content-Type, requests will set it with boundary
-                }
+                files = {'file': (filename, f, 'image/jpeg')}
+                data = {'uploadPath': 'travel-videos'}
+                headers = {"Authorization": f"Bearer {self.api_key}"}
                 
                 response = requests.post(
                     f"{self.upload_base_url}/api/file-stream-upload",
                     headers=headers,
                     files=files,
-                    data=data,  # Add form data
+                    data=data,
                     timeout=30
                 )
             
@@ -80,32 +57,24 @@ class VideoGenerationService:
             
             if not response.ok:
                 logger.error(f"❌ Upload failed: {response.status_code}")
-                logger.error(f"❌ Response: {response.text[:500]}")
                 return None
             
             result = response.json()
             
-            # Check for success
             if result.get("code") != 200:
-                error_msg = result.get("msg", "Unknown error")
-                logger.error(f"❌ Upload API error: {error_msg}")
+                logger.error(f"❌ Upload API error: {result.get('msg')}")
                 return None
             
-            # Extract file URL
             data = result.get("data", {})
-            file_url = (data.get("downloadUrl") or 
-                       data.get("url") or 
-                       data.get("fileUrl") or 
-                       data.get("file_url"))
+            file_url = (data.get("downloadUrl") or data.get("url") or 
+                       data.get("fileUrl") or data.get("file_url"))
             
-            if not file_url:
-                logger.error(f"❌ No URL in upload response: {result}")
-                return None
+            if file_url:
+                logger.info(f"✅ File uploaded successfully!")
+                return file_url
             
-            logger.info(f"✅ File uploaded successfully!")
-            logger.info(f"🔗 Public URL: {file_url}")
-            
-            return file_url
+            logger.error(f"❌ No URL in upload response")
+            return None
             
         except Exception as e:
             logger.error(f"❌ Upload exception: {e}")
@@ -117,38 +86,20 @@ class VideoGenerationService:
         destination: str,
         duration: int,
         daily_activities: List[Dict[str, Any]],
-        model: str = "veo3",
+        model: str = "veo3_fast",
         progress_callback: Optional[Callable] = None,
         video_id: Optional[str] = None,
         video_db: Optional[Any] = None
     ) -> Dict[str, Any]:
-        """
-        Generate day-by-day videos and merge them into final video.
+        """Generate day-by-day videos showing user's actual journey."""
         
-        SIMPLE APPROACH:
-        - Generate one video per day with user + day's location photos
-        - Use simple, effective prompts
-        - Merge all day videos using moviepy
-        
-        Args:
-            user_image_url: User's photo URL
-            destination: Destination name  
-            duration: Number of days
-            daily_activities: All day activities with photos
-            model: "veo3" or "veo3_fast"
-            progress_callback: Callback function for progress updates
-            
-        Returns:
-            Dict with success, video_url, merged video info
-        """
         logger.info("="*80)
         logger.info("🎥 GENERATING DAY-BY-DAY TRAVEL VIDEOS")
         logger.info(f"📍 Destination: {destination}")
         logger.info(f"📅 Duration: {duration} days")
-        logger.info(f"🎬 Strategy: One video per day + merge")
         logger.info("="*80)
         
-        # Step 0: Upload user photo if localhost
+        # Upload user photo if localhost
         if user_image_url.startswith("http://localhost") or user_image_url.startswith("http://127.0.0.1"):
             logger.info("🔄 Uploading user photo to KIE AI...")
             filename = user_image_url.split("/uploads/", 1)[-1]
@@ -156,13 +107,13 @@ class VideoGenerationService:
             
             public_url = self.upload_file_to_kie(local_path)
             if public_url:
-                logger.info(f"✅ Using public URL")
                 user_image_url = public_url
+                logger.info(f"✅ Using public URL")
             else:
                 logger.error("❌ Upload failed!")
                 return {"success": False, "error": "Failed to upload photo"}
         
-        # Step 1: Generate videos for each day
+        # Generate videos for each day
         day_video_paths = []
         
         for day_num in range(1, duration + 1):
@@ -170,17 +121,16 @@ class VideoGenerationService:
             logger.info(f"🎬 GENERATING VIDEO FOR DAY {day_num}")
             logger.info("="*60)
             
-            # Update progress
             if progress_callback:
                 progress_callback({
                     "current_day": day_num,
                     "total_days": duration,
-                    "progress": int((day_num - 1) / duration * 90),  # 0-90%
+                    "progress": int((day_num - 1) / duration * 90),
                     "current_stage": f"Generating Day {day_num} video...",
                     "completed_days": day_num - 1
                 })
             
-            # Get day's activities and photos
+            # Get day's activities
             day_idx = day_num - 1
             if day_idx >= len(daily_activities):
                 logger.warning(f"⚠️ No activities for day {day_num}, skipping")
@@ -188,29 +138,15 @@ class VideoGenerationService:
             
             day_activities = daily_activities[day_idx]
             
-            # Collect photos for this day (user + day's locations)
-            day_photos = self._collect_day_photos(user_image_url, day_activities)
+            # User photo only
+            day_photos = [user_image_url]
+            logger.info(f"📸 Using user photo for Day {day_num}")
             
-            if not day_photos:
-                logger.warning(f"⚠️ No photos for day {day_num}, skipping")
-                
-                # Save failed day to database
-                if video_db and video_id:
-                    video_db.save_day_video(
-                        video_id=video_id,
-                        day_number=day_num,
-                        status="failed",
-                        error_message="No photos available"
-                    )
-                continue
+            # Create optimized activity-specific prompt
+            prompt = self._create_journey_prompt(day_num, day_activities)
+            logger.info(f"📝 Prompt preview: {prompt[:150]}...")
             
-            logger.info(f"📸 Day {day_num} photos: {len(day_photos)} images")
-            
-            # Create simple prompt
-            prompt = self._create_simple_day_prompt(destination, day_num, day_activities)
-            logger.info(f"📝 Prompt: {prompt}")
-            
-            # Save day video as processing in database
+            # Save to database
             if video_db and video_id:
                 video_db.save_day_video(
                     video_id=video_id,
@@ -226,13 +162,11 @@ class VideoGenerationService:
                 image_urls=day_photos,
                 model=model,
                 destination=destination,
-                duration=1  # Single day
+                duration=1
             )
             
             if not result["success"]:
-                logger.error(f"❌ Day {day_num} video generation failed: {result.get('error')}")
-                
-                # Update database
+                logger.error(f"❌ Day {day_num} failed: {result.get('error')}")
                 if video_db and video_id:
                     video_db.save_day_video(
                         video_id=video_id,
@@ -244,9 +178,8 @@ class VideoGenerationService:
             
             # Wait for video
             task_id = result["task_id"]
-            logger.info(f"⏳ Waiting for Day {day_num} video...")
+            logger.info(f"⏳ Waiting for Day {day_num} video (task: {task_id})...")
             
-            # Update database with task_id
             if video_db and video_id:
                 video_db.save_day_video(
                     video_id=video_id,
@@ -259,8 +192,6 @@ class VideoGenerationService:
             
             if not video_result["success"]:
                 logger.error(f"❌ Day {day_num} video failed: {video_result.get('error')}")
-                
-                # Update database
                 if video_db and video_id:
                     video_db.save_day_video(
                         video_id=video_id,
@@ -274,27 +205,15 @@ class VideoGenerationService:
             video_url = video_result.get("video_url")
             if not video_url:
                 logger.error(f"❌ No video URL for Day {day_num}")
-                
-                # Update database
-                if video_db and video_id:
-                    video_db.save_day_video(
-                        video_id=video_id,
-                        day_number=day_num,
-                        status="failed",
-                        error_message="No video URL returned"
-                    )
                 continue
             
             output_filename = f"day_{day_num}_{destination.replace(' ', '_')}.mp4"
             output_path = f"/tmp/{output_filename}"
             
-            download_success = self.download_video(video_url, output_path)
-            
-            if download_success:
+            if self.download_video(video_url, output_path):
                 day_video_paths.append(output_path)
-                logger.info(f"✅ Day {day_num} video downloaded: {output_path}")
+                logger.info(f"✅ Day {day_num} video downloaded")
                 
-                # Update database with completed video
                 if video_db and video_id:
                     video_db.save_day_video(
                         video_id=video_id,
@@ -303,20 +222,8 @@ class VideoGenerationService:
                         local_path=output_path,
                         status="completed"
                     )
-            else:
-                logger.error(f"❌ Failed to download Day {day_num} video")
-                
-                # Update database
-                if video_db and video_id:
-                    video_db.save_day_video(
-                        video_id=video_id,
-                        day_number=day_num,
-                        video_url=video_url,
-                        status="failed",
-                        error_message="Download failed"
-                    )
         
-        # Step 2: Merge all day videos
+        # Merge all day videos
         if not day_video_paths:
             logger.error("❌ No day videos generated!")
             return {
@@ -337,32 +244,23 @@ class VideoGenerationService:
                 "completed_days": duration
             })
         
-        # Merge videos - save in current directory
         final_video_path = f"videos/{destination.replace(' ', '_')}_trip_final.mp4"
         merge_success = self._merge_videos(day_video_paths, final_video_path)
         
-        # Cleanup temp files
+        # Cleanup
         for temp_path in day_video_paths:
             try:
                 os.remove(temp_path)
-                logger.info(f"🗑️ Cleaned up: {temp_path}")
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to cleanup {temp_path}: {e}")
+            except:
+                pass
         
         if not merge_success:
-            logger.error("❌ Video merging failed!")
-            return {
-                "success": False,
-                "error": "Failed to merge day videos"
-            }
+            return {"success": False, "error": "Failed to merge day videos"}
         
         logger.info("="*80)
-        logger.info(f"🎉 FINAL VIDEO COMPLETE!")
-        logger.info(f"📁 Path: {final_video_path}")
-        logger.info(f"📅 Days covered: {len(day_video_paths)}")
+        logger.info(f"🎉 FINAL VIDEO COMPLETE: {final_video_path}")
         logger.info("="*80)
         
-        # Get video filename
         video_filename = os.path.basename(final_video_path)
         
         if progress_callback:
@@ -383,106 +281,91 @@ class VideoGenerationService:
             "status": "completed"
         }
     
-    def _download_and_upload_photo(self, photo_url: str, filename: str) -> Optional[str]:
-        """
-        For Google Places photos, just return the URL as-is.
-        KIE AI should be able to fetch public Google Places photos.
-        
-        Args:
-            photo_url: URL of photo
-            filename: Name for the file (unused now)
-            
-        Returns:
-            Original photo URL
-        """
-        # Return Google Places URL directly
-        return photo_url
-    
-    def _collect_day_photos(
+    def _create_journey_prompt(
         self,
-        user_image_url: str,
-        day_activities: Dict[str, Any]
-    ) -> List[str]:
-        """
-        Collect photos for a single day.
-        
-        Strategy:
-        - User photo (uploaded to KIE AI)
-        - 1-2 location photos (Google Places URLs)
-        - Use URLs directly
-        
-        Returns:
-            List of photo URLs (2-3 max)
-        """
-        photos = []
-        
-        # Add user photo first (already uploaded to KIE AI)
-        photos.append(user_image_url)
-        logger.info(f"📸 User photo: {user_image_url[:50]}...")
-        
-        # Add 1-2 location photos
-        location_count = 0
-        
-        for period in ["morning", "afternoon", "evening"]:
-            if location_count >= 2:  # MAX 2 location photos
-                break
-                
-            if day_activities.get(period) and day_activities[period].get("photo_url"):
-                photo_url = day_activities[period]["photo_url"]
-                
-                # Skip local/relative URLs
-                if photo_url.startswith("/") or "localhost" in photo_url or "127.0.0.1" in photo_url:
-                    logger.warning(f"⚠️ Skipping local URL: {photo_url[:50]}...")
-                    continue
-                
-                # Use Google Places photos directly with good resolution
-                if "maps.googleapis.com" in photo_url or "googleusercontent.com" in photo_url:
-                    # Use 400px for good quality
-                    if "?" in photo_url:
-                        base_url = photo_url.split("?")[0]
-                        params = photo_url.split("?")[1]
-                        # Update maxwidth if exists
-                        if "maxwidth" in params:
-                            params = "maxwidth=400&" + "&".join([p for p in params.split("&") if "maxwidth" not in p])
-                        else:
-                            params += "&maxwidth=400"
-                        photo_url = f"{base_url}?{params}"
-                    else:
-                        photo_url += "?maxwidth=400"
-                    
-                    logger.info(f"📸 Using 400px Google Places photo")
-                
-                photos.append(photo_url)
-                logger.info(f"📸 {period}: {photo_url[:80]}...")
-                location_count += 1
-        
-        logger.info(f"📸 Total for day: {len(photos)} images (1 user + {location_count} locations)")
-        
-        return photos
-    
-    def _create_simple_day_prompt(
-        self,
-        destination: str,
         day_num: int,
         day_activities: Dict[str, Any]
     ) -> str:
         """
-        Create simple, generic prompt that avoids content policy issues.
+        Create vivid, emotionally engaging prompt that captures the EXCITEMENT and JOY of travel.
         
-        Focus on the visual storytelling using photos, not specific place names.
+        Focus on:
+        1. Visible EXCITEMENT and enthusiasm in every action
+        2. FUN MOMENTS and laughter throughout activities
+        3. Active EXPLORATION with curiosity and wonder
+        4. MEMORABLE EXPERIENCES showing authentic joy
+        5. Emotional connection to the journey
         """
-        # Simple, safe prompt - no specific place names
+        
+        morning = day_activities.get("morning", {})
+        afternoon = day_activities.get("afternoon", {})
+        evening = day_activities.get("evening", {})
+        
+        # Build narrative showing vivid journey with excitement
+        scenes = []
+        
+        # Morning scene
+        if morning.get("activity"):
+            morning_scene = self._build_vivid_activity_scene(
+                activity_text=morning.get("activity", ""),
+                time_period="morning",
+                timing="0-2.5 seconds"
+            )
+            scenes.append(morning_scene)
+        
+        # Afternoon scene
+        if afternoon.get("activity"):
+            afternoon_scene = self._build_vivid_activity_scene(
+                activity_text=afternoon.get("activity", ""),
+                time_period="afternoon",
+                timing="2.5-5 seconds"
+            )
+            scenes.append(afternoon_scene)
+        
+        # Evening scene
+        if evening.get("activity"):
+            evening_scene = self._build_vivid_activity_scene(
+                activity_text=evening.get("activity", ""),
+                time_period="evening",
+                timing="5-8 seconds"
+            )
+            scenes.append(evening_scene)
+        
+        if not scenes:
+            return self._create_fallback_prompt(day_num)
+        
+        # Combine into complete prompt with emotional energy
         prompt = (
-            f"""
-            Create an 8-second travel highlight video for Day {day_num} using the three uploaded photos (one user photo and two location photos). 
-            1) Begin with the first location photo as a wide establishing shot. Add a slow cinematic push-in and slight movement in clouds or water to bring it to life. 
-            2) Transition to the user photo combined with the second location photo: animate subtle parallax, small motions (like gentle head turn or body shift), and environmental animation (like waving foliage or drifting light) to evoke the experience of visiting and enjoying the place. 
-            3) End with a blended wide view of the location photos with gentle camera movement and ambient travel sounds or soft background music. 
-            Use warm, cinematic color tones with smooth transitions and natural motion focusing on scenery and atmosphere.
-            """
+            f"Create a vibrant 8-second travel vlog capturing Day {day_num} - a day filled with excitement, "
+            f"wonder, and unforgettable moments. Show the traveler's GENUINE JOY and enthusiasm as they "
+            f"experience each activity. This is their adventure coming to life:"
         )
-
+        
+        # Add each scene
+        for i, scene in enumerate(scenes, 1):
+            prompt += f" [{i}] {scene}"
+        
+        # Add vivid animation and emotional instructions
+        prompt += (
+            " ANIMATE the traveler's expressions and movements to radiate pure happiness and excitement. "
+            "CAMERA: Use dynamic handheld shots that follow their energetic actions, zooming in on joyful expressions, "
+            "panning to reveal stunning surroundings that fuel their enthusiasm. STYLE: Bright, saturated colors full of life. "
+            "Golden lighting enhancing the warmth and vibrancy of the day. Lens flares adding magical touch. "
+            "AUDIO: Include ambient sounds of laughter, cheerful chatter, upbeat music that matches the energetic vibe. "
+            "FEELING: This video should make viewers feel the traveler's exhilaration and joy of discovery, "
+            "immersing them in the thrill of exploration and memorable experiences."
+        )
+        
         return prompt
+    
+    
+    def _create_fallback_prompt(self, day_num: int) -> str:
+        """Fallback prompt capturing excitement even without specific activities."""
+        return (
+            f"Create a vibrant 8-second travel video of Day {day_num} showing pure travel joy. "
+            "Show the traveler's excitement and enthusiasm as they explore new places. "
+            "CAMERA: Dynamic handheld shots capturing joyful expressions and stunning surroundings. "
+        )
     
     def _generate_video_with_images(
         self,
@@ -492,9 +375,7 @@ class VideoGenerationService:
         destination: str,
         duration: int
     ) -> Dict[str, Any]:
-        """
-        Call KIE AI API to generate video with multiple reference images.
-        """
+        """Call KIE AI API to generate video."""
         try:
             payload = {
                 "prompt": prompt,
@@ -506,13 +387,15 @@ class VideoGenerationService:
                 "enableFallback": True,
                 "personGeneration": "allow_adult",
                 "generateAudio": True,
-                "negativePrompt": "Exclude any harmful, unsafe, violent, or sensitive visual content"
+                "negativePrompt": (
+                    "static image, frozen pose, no movement, lifeless scene, "
+                    "unnatural motion, robotic movements, text overlays, watermarks, "
+                    "low quality, blurry, distorted faces"
+                )
             }
             
-            logger.info(f"🔧 API Request: POST {self.base_url}/generate")
-            logger.info(f"🔧 Model: {model}")
-            logger.info(f"🔧 Images: {len(image_urls)}")
-            logger.info(f"🔧 Aspect Ratio: 16:9")
+            logger.info(f"🔧 API Request: {self.base_url}/generate")
+            logger.info(f"🔧 Model: {model} | Images: {len(image_urls)}")
             
             response = requests.post(
                 f"{self.base_url}/generate",
@@ -521,44 +404,23 @@ class VideoGenerationService:
                 timeout=30
             )
             
-            logger.info(f"📡 HTTP Status: {response.status_code}")
-            
             if not response.ok:
-                error_text = response.text[:500]
-                logger.error(f"❌ HTTP Error: {response.status_code}")
-                logger.error(f"❌ Response: {error_text}")
                 return {
                     "success": False,
-                    "error": f"HTTP {response.status_code}: {error_text}"
+                    "error": f"HTTP {response.status_code}: {response.text[:500]}"
                 }
             
             result = response.json()
-            api_code = result.get("code")
-            logger.info(f"📡 API Code: {api_code}")
             
-            # Check API error
-            if api_code != 200:
-                error_msg = result.get("msg", "Unknown API error")
-                logger.error(f"❌ API Error: {error_msg}")
-                
-                # Provide helpful guidance for common errors
-                if "size exceeds limit" in error_msg.lower():
-                    logger.error("💡 Image size too large. Using optimized images.")
-                    return {
-                        "success": False,
-                        "error": "Image size exceeds KIE AI limit.",
-                        "api_response": result
-                    }
-                
+            if result.get("code") != 200:
                 return {
                     "success": False,
-                    "error": error_msg,
-                    "api_response": result
+                    "error": result.get("msg", "Unknown API error")
                 }
             
             # Extract task ID
             task_id = None
-            if result.get("data") and isinstance(result["data"], dict):
+            if result.get("data"):
                 task_id = (result["data"].get("taskId") or 
                           result["data"].get("task_id") or 
                           result["data"].get("id"))
@@ -567,36 +429,19 @@ class VideoGenerationService:
                 task_id = result.get("taskId") or result.get("task_id")
             
             if not task_id:
-                logger.error(f"❌ No task_id in response: {result}")
-                return {
-                    "success": False,
-                    "error": "No task_id returned",
-                    "api_response": result
-                }
+                return {"success": False, "error": "No task_id returned"}
             
             return {
                 "success": True,
                 "task_id": task_id,
-                "status": "processing",
-                "images_used": len(image_urls),
-                "destination": destination,
-                "duration": duration
+                "status": "processing"
             }
             
         except Exception as e:
-            logger.error(f"❌ Exception: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            return {"success": False, "error": str(e)}
     
     def check_video_status(self, task_id: str) -> Dict[str, Any]:
-        """
-        Check video generation status.
-        
-        Returns:
-            Dict with status, video_url if complete, error if failed
-        """
+        """Check video generation status."""
         try:
             response = requests.get(
                 f"{self.base_url}/record-info?taskId={task_id}",
@@ -605,167 +450,80 @@ class VideoGenerationService:
             )
             
             if not response.ok:
-                return {
-                    "success": False,
-                    "status": "error",
-                    "error": f"HTTP {response.status_code}",
-                    "task_id": task_id
-                }
+                return {"success": False, "status": "error", "error": f"HTTP {response.status_code}"}
             
             result = response.json()
             
             if result.get("code") != 200:
-                error_msg = result.get("msg", "Unknown error")
-                return {
-                    "success": False,
-                    "status": "error",
-                    "error": error_msg,
-                    "task_id": task_id
-                }
+                return {"success": False, "status": "error", "error": result.get("msg", "Unknown error")}
             
             data = result.get("data", {})
             success_flag = data.get("successFlag")
             
-            # successFlag: 0 = processing, 1 = completed, 2/3 = failed
             if success_flag == 1:
-                # Parse video URL - try multiple possible locations
+                # Get video URL
                 video_url = None
-                
-                # Try 1: data['response']['resultUrls']
-                if data.get("response") and isinstance(data["response"], dict):
+                if data.get("response"):
                     result_urls = data["response"].get("resultUrls")
-                    if result_urls and isinstance(result_urls, list) and len(result_urls) > 0:
+                    if result_urls and len(result_urls) > 0:
                         video_url = result_urls[0]
-                        logger.info(f"✅ Video URL from response.resultUrls")
                 
-                # Try 2: data['resultUrls']
                 if not video_url:
                     result_urls_str = data.get("resultUrls")
                     if result_urls_str:
-                        try:
-                            if isinstance(result_urls_str, str):
-                                result_urls = json.loads(result_urls_str)
-                            else:
-                                result_urls = result_urls_str
-                            
-                            if result_urls and len(result_urls) > 0:
-                                video_url = result_urls[0]
-                                logger.info(f"✅ Video URL from resultUrls")
-                        except Exception as e:
-                            logger.warning(f"⚠️ Failed to parse resultUrls: {e}")
-                
-                # Try 3: Other possible field names
-                if not video_url:
-                    video_url = (data.get("videoUrl") or 
-                                data.get("video_url") or 
-                                data.get("url") or
-                                data.get("downloadUrl"))
-                
-                if not video_url:
-                    logger.error(f"❌ No video URL found in response!")
+                        if isinstance(result_urls_str, str):
+                            result_urls = json.loads(result_urls_str)
+                        else:
+                            result_urls = result_urls_str
+                        if result_urls and len(result_urls) > 0:
+                            video_url = result_urls[0]
                 
                 return {
                     "success": True,
                     "status": "completed",
                     "video_url": video_url,
-                    "task_id": task_id,
-                    "data": data
+                    "task_id": task_id
                 }
             
             elif success_flag in [2, 3]:
-                error_msg = data.get("errorMessage", "Video generation failed")
-                logger.error(f"❌ Video failed: {error_msg}")
                 return {
                     "success": False,
                     "status": "failed",
-                    "error": error_msg,
-                    "task_id": task_id
+                    "error": data.get("errorMessage", "Video generation failed")
                 }
             
-            else:  # Processing
-                return {
-                    "success": True,
-                    "status": "processing",
-                    "progress": 0,
-                    "task_id": task_id
-                }
+            else:
+                return {"success": True, "status": "processing"}
                 
         except Exception as e:
-            logger.error(f"❌ Error checking status: {e}")
-            return {
-                "success": False,
-                "status": "error",
-                "error": str(e),
-                "task_id": task_id
-            }
+            return {"success": False, "status": "error", "error": str(e)}
     
-    def wait_for_video(
-        self,
-        task_id: str,
-        max_wait_time: int = 600,
-        poll_interval: int = 10
-    ) -> Dict[str, Any]:
-        """
-        Wait for video to complete, polling status.
-        
-        Args:
-            task_id: Video task ID
-            max_wait_time: Maximum seconds to wait (default 10 minutes)
-            poll_interval: Seconds between polls (default 10 seconds)
-            
-        Returns:
-            Dict with success, status, video_url
-        """
+    def wait_for_video(self, task_id: str, max_wait_time: int = 600, poll_interval: int = 10) -> Dict[str, Any]:
+        """Wait for video to complete."""
         start_time = time.time()
-        checks = 0
         
         while time.time() - start_time < max_wait_time:
-            checks += 1
-            
             status_result = self.check_video_status(task_id)
             
             if not status_result.get("success"):
                 return status_result
             
-            current_status = status_result["status"]
-            
-            if current_status == "completed":
-                elapsed = int(time.time() - start_time)
-                logger.info(f"✅ Video completed after {elapsed}s ({checks} checks)")
+            if status_result["status"] == "completed":
+                return status_result
+            elif status_result["status"] == "failed":
                 return status_result
             
-            elif current_status == "failed":
-                return status_result
-            
-            # Still processing
-            elapsed = int(time.time() - start_time)
-            logger.info(f"⏳ Still processing... ({elapsed}s elapsed)")
             time.sleep(poll_interval)
         
-        # Timeout
-        elapsed = int(time.time() - start_time)
-        logger.error(f"❌ Timeout after {elapsed}s")
         return {
             "success": False,
             "status": "timeout",
-            "error": f"Video generation exceeded {max_wait_time}s timeout",
-            "task_id": task_id
+            "error": f"Timeout after {max_wait_time}s"
         }
     
     def download_video(self, video_url: str, output_path: str) -> bool:
-        """
-        Download video from URL to local file.
-        
-        Args:
-            video_url: URL to video
-            output_path: Local path to save video
-            
-        Returns:
-            True if successful, False otherwise
-        """
+        """Download video from URL."""
         try:
-            logger.info(f"📥 Downloading video from: {video_url[:80]}...")
-            
             response = requests.get(video_url, stream=True, timeout=120)
             response.raise_for_status()
             
@@ -773,8 +531,7 @@ class VideoGenerationService:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             
-            file_size = os.path.getsize(output_path) / (1024 * 1024)  # MB
-            logger.info(f"✅ Video downloaded: {output_path} ({file_size:.2f} MB)")
+            logger.info(f"✅ Downloaded: {output_path}")
             return True
             
         except Exception as e:
@@ -782,39 +539,18 @@ class VideoGenerationService:
             return False
     
     def _merge_videos(self, video_paths: List[str], output_path: str) -> bool:
-        """
-        Merge multiple day videos into one final video using moviepy.
-        
-        Args:
-            video_paths: List of paths to day videos
-            output_path: Path for merged output video
-            
-        Returns:
-            True if successful, False otherwise
-        """
+        """Merge multiple videos using moviepy."""
         try:
             from moviepy.editor import VideoFileClip, concatenate_videoclips
             
-            logger.info(f"🎬 Loading {len(video_paths)} video clips...")
+            logger.info(f"🎬 Loading {len(video_paths)} clips...")
             
-            # Load all video clips
-            clips = []
-            for i, video_path in enumerate(video_paths, 1):
-                logger.info(f"📼 Loading clip {i}/{len(video_paths)}: {video_path}")
-                clip = VideoFileClip(video_path)
-                clips.append(clip)
-            
-            logger.info(f"🔗 Concatenating {len(clips)} clips...")
-            
-            # Concatenate all clips
+            clips = [VideoFileClip(path) for path in video_paths]
             final_clip = concatenate_videoclips(clips, method="compose")
             
-            # Ensure output directory exists
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
-            logger.info(f"💾 Writing final video: {output_path}")
-            
-            # Write output video
+            logger.info(f"💾 Writing final video...")
             final_clip.write_videofile(
                 output_path,
                 codec='libx264',
@@ -824,22 +560,12 @@ class VideoGenerationService:
                 fps=24
             )
             
-            # Clean up
             final_clip.close()
             for clip in clips:
                 clip.close()
             
-            # Verify output
-            if os.path.exists(output_path):
-                file_size = os.path.getsize(output_path) / (1024 * 1024)
-                logger.info(f"✅ Final video created: {output_path} ({file_size:.2f} MB)")
-                return True
-            else:
-                logger.error(f"❌ Output file not created: {output_path}")
-                return False
+            return os.path.exists(output_path)
             
         except Exception as e:
-            logger.error(f"❌ Video merge failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"❌ Merge failed: {e}")
             return False

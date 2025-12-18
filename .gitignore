@@ -17,5 +17,9 @@ uploads/
 # Video files
 videos/
 
+# Extra files
+video_service2.py
+video_service3.py
+
 
 

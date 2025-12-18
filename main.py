@@ -18,7 +18,7 @@ import shutil
 
 from itinerary_service import ItineraryService
 from demo_data import DemoDataManager
-from video_service import VideoGenerationService
+from video_service2 import VideoGenerationService
 from video_database import VideoDatabase
 
 load_dotenv()
@@ -67,7 +67,7 @@ KIE_AI_API_KEY = os.getenv("KIE_AI_API_KEY")
 logger.info("🚀 Initializing services...")
 demo_data_manager = DemoDataManager(GOOGLE_PLACES_API_KEY, GOOGLE_MAPS_API_KEY, OPEN_AI_API_KEY)
 itinerary_service = ItineraryService(demo_data_manager, api_key=OPEN_AI_API_KEY)
-video_service = VideoGenerationService(api_key=KIE_AI_API_KEY)
+video_service = VideoGenerationService(KIE_AI_API_KEY, OPEN_AI_API_KEY)
 video_db = VideoDatabase()  # Initialize database
 logger.info("✅ Services initialized successfully")
 
@@ -377,7 +377,7 @@ async def generate_video_background(
             logger.info(f"📊 Progress update: {progress_data}")
         
         # Generate day-by-day videos and merge
-        result = video_service.generate_full_itinerary_video(
+        result = await video_service.generate_full_itinerary_video(
             user_image_url=user_photo_url,
             destination=destination,
             duration=duration,
