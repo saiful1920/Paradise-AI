@@ -18,7 +18,7 @@ import shutil
 
 from itinerary_service import ItineraryService
 from demo_data import DemoDataManager
-from video_service2 import VideoGenerationService
+from video_service import VideoGenerationService
 from video_database import VideoDatabase
 
 load_dotenv()
