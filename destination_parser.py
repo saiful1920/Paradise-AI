@@ -13,6 +13,7 @@ Handles ANY user input:
 import os
 import json
 import logging
+import requests
 from typing import Dict, Any, Optional
 from openai import OpenAI
 
@@ -230,8 +231,6 @@ class SmartDestinationManager:
         
         # Step 2: Get coordinates with Google Geocoding
         try:
-            import requests
-            
             params = {
                 "address": search_query,
                 "key": self.google_api_key

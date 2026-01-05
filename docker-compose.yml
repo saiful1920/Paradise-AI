@@ -16,8 +16,7 @@ services:
       # Persist uploaded files and generated videos
       - ./uploads:/app/uploads
       - ./videos:/app/videos
-      # Persist SQLite database
-      - ./video_db.sqlite:/app/video_db.sqlite
+      
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/')"]

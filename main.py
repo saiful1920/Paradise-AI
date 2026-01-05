@@ -15,6 +15,7 @@ import os
 from dotenv import load_dotenv
 import logging
 import shutil
+import traceback
 
 from itinerary_service import ItineraryService
 from demo_data import DemoDataManager
@@ -67,7 +68,7 @@ KIE_AI_API_KEY = os.getenv("KIE_AI_API_KEY")
 logger.info("🚀 Initializing services...")
 demo_data_manager = DemoDataManager(GOOGLE_PLACES_API_KEY, GOOGLE_MAPS_API_KEY, OPEN_AI_API_KEY)
 itinerary_service = ItineraryService(demo_data_manager, api_key=OPEN_AI_API_KEY)
-video_service = VideoGenerationService(KIE_AI_API_KEY, OPEN_AI_API_KEY)
+video_service = VideoGenerationService(KIE_AI_API_KEY)
 video_db = VideoDatabase()  # Initialize database
 logger.info("✅ Services initialized successfully")
 
@@ -241,7 +242,6 @@ async def create_itinerary(request: ItineraryRequest):
         
     except Exception as e:
         logger.error(f"\n❌ ERROR CREATING ITINERARY: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -438,7 +438,6 @@ async def generate_video_background(
             
     except Exception as e:
         logger.error(f"❌ Error in background video generation: {e}")
-        import traceback
         traceback.print_exc()
         video_tasks[video_id].update({
             "status": "failed",
@@ -528,6 +527,6 @@ async def chat_with_ai(request: ChatMessage):
 
 if __name__ == "__main__":
     logger.info("🚀 Starting Travel Itinerary Generator API...")
-    logger.info("📡 Server will be available at: http://0.0.0.0:8001")
+    logger.info("📡 Server will be available at: http://0.0.0.0:8000")
     logger.info("="*80)
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

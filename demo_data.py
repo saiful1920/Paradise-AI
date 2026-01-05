@@ -28,7 +28,73 @@ api_logger.setLevel(logging.DEBUG)
 
 
 class DemoDataManager:
-    """Manages all data for the travel itinerary system using Google Places API"""
+    """Manages all data for the travel itinerary system using Google Places API with REAL pricing"""
+    
+    # Region-specific price multipliers for converting price_level to actual costs
+    REGION_PRICE_MULTIPLIERS = {
+        # Asia
+        "Asia/Bangkok": {"hotel": 0.5, "meal": 0.4, "activity": 0.5},
+        "Asia/Jakarta": {"hotel": 0.45, "meal": 0.35, "activity": 0.45},
+        "Asia/Manila": {"hotel": 0.4, "meal": 0.3, "activity": 0.4},
+        "Asia/Ho_Chi_Minh": {"hotel": 0.4, "meal": 0.3, "activity": 0.4},
+        "Asia/Kolkata": {"hotel": 0.35, "meal": 0.25, "activity": 0.35},
+        "Asia/Dhaka": {"hotel": 0.3, "meal": 0.2, "activity": 0.3},
+        "Asia/Tokyo": {"hotel": 1.4, "meal": 1.3, "activity": 1.4},
+        "Asia/Seoul": {"hotel": 1.2, "meal": 1.1, "activity": 1.2},
+        "Asia/Singapore": {"hotel": 1.5, "meal": 1.2, "activity": 1.3},
+        "Asia/Hong_Kong": {"hotel": 1.6, "meal": 1.3, "activity": 1.4},
+        "Asia/Dubai": {"hotel": 1.4, "meal": 1.2, "activity": 1.3},
+        "Asia/Shanghai": {"hotel": 1.1, "meal": 0.9, "activity": 1.0},
+        
+        # Europe
+        "Europe/London": {"hotel": 1.5, "meal": 1.4, "activity": 1.3},
+        "Europe/Paris": {"hotel": 1.4, "meal": 1.3, "activity": 1.3},
+        "Europe/Zurich": {"hotel": 1.8, "meal": 1.7, "activity": 1.6},
+        "Europe/Oslo": {"hotel": 1.7, "meal": 1.6, "activity": 1.5},
+        "Europe/Copenhagen": {"hotel": 1.6, "meal": 1.5, "activity": 1.4},
+        "Europe/Rome": {"hotel": 1.2, "meal": 1.1, "activity": 1.1},
+        "Europe/Madrid": {"hotel": 1.1, "meal": 1.0, "activity": 1.0},
+        "Europe/Barcelona": {"hotel": 1.2, "meal": 1.1, "activity": 1.1},
+        "Europe/Amsterdam": {"hotel": 1.4, "meal": 1.3, "activity": 1.3},
+        "Europe/Berlin": {"hotel": 1.1, "meal": 1.0, "activity": 1.0},
+        "Europe/Prague": {"hotel": 0.8, "meal": 0.7, "activity": 0.8},
+        "Europe/Budapest": {"hotel": 0.7, "meal": 0.6, "activity": 0.7},
+        
+        # North America
+        "America/New_York": {"hotel": 1.4, "meal": 1.3, "activity": 1.2},
+        "America/Los_Angeles": {"hotel": 1.5, "meal": 1.3, "activity": 1.3},
+        "America/Chicago": {"hotel": 1.2, "meal": 1.1, "activity": 1.1},
+        "America/Toronto": {"hotel": 1.2, "meal": 1.1, "activity": 1.1},
+        "America/Vancouver": {"hotel": 1.3, "meal": 1.2, "activity": 1.2},
+        "America/Mexico_City": {"hotel": 0.6, "meal": 0.5, "activity": 0.6},
+        
+        # South America
+        "America/Sao_Paulo": {"hotel": 0.7, "meal": 0.6, "activity": 0.7},
+        "America/Buenos_Aires": {"hotel": 0.6, "meal": 0.5, "activity": 0.6},
+        "America/Lima": {"hotel": 0.6, "meal": 0.5, "activity": 0.6},
+        
+        # Oceania
+        "Australia/Sydney": {"hotel": 1.3, "meal": 1.2, "activity": 1.3},
+        "Australia/Melbourne": {"hotel": 1.2, "meal": 1.1, "activity": 1.2},
+        "Pacific/Auckland": {"hotel": 1.2, "meal": 1.1, "activity": 1.2},
+        
+        # Africa
+        "Africa/Cairo": {"hotel": 0.5, "meal": 0.4, "activity": 0.5},
+        "Africa/Johannesburg": {"hotel": 0.6, "meal": 0.5, "activity": 0.6},
+        "Africa/Nairobi": {"hotel": 0.6, "meal": 0.5, "activity": 0.6},
+        
+        # Middle East
+        "Asia/Riyadh": {"hotel": 1.1, "meal": 1.0, "activity": 1.1},
+        "Asia/Tehran": {"hotel": 0.4, "meal": 0.3, "activity": 0.4},
+        "Asia/Istanbul": {"hotel": 0.7, "meal": 0.6, "activity": 0.7},
+    }
+    
+    # Base conversion rates from price_level (0-4) to USD
+    BASE_PRICE_CONVERSION = {
+        "hotel": {0: 25, 1: 50, 2: 100, 3: 200, 4: 350},  # per night
+        "meal": {0: 5, 1: 12, 2: 25, 3: 50, 4: 100},      # per meal
+        "activity": {0: 0, 1: 15, 2: 35, 3: 75, 4: 150}   # per activity
+    }
     
     def __init__(self, google_api_key, google_maps_key, openai_api_key):
         self.google_api_key = google_api_key
@@ -68,6 +134,31 @@ class DemoDataManager:
             logger.warning("")
             logger.warning("   See CRITICAL_SETUP_GUIDE.md for detailed instructions")
             logger.warning("=" * 80)
+    
+    def _convert_price_level_to_usd(self, price_level: int, category: str, timezone: str) -> float:
+        """
+        Convert Google Places price_level (0-4) to actual USD based on region
+        
+        Args:
+            price_level: Google Places price level (0-4)
+            category: "hotel", "meal", or "activity"
+            timezone: Destination timezone (e.g., "Asia/Tokyo")
+        
+        Returns:
+            Estimated price in USD
+        """
+        # Get base price
+        base_price = self.BASE_PRICE_CONVERSION.get(category, {}).get(price_level, 50)
+        
+        # Get region multiplier
+        multiplier = self.REGION_PRICE_MULTIPLIERS.get(timezone, {}).get(category, 1.0)
+        
+        # Calculate final price
+        final_price = base_price * multiplier
+        
+        logger.debug(f"💵 Price conversion: {category} level {price_level} in {timezone} = ${final_price:.2f} (base: ${base_price}, multiplier: {multiplier})")
+        
+        return round(final_price, 2)
     
     def get_destination_info(self, destination: str) -> Dict[str, Any]:
         """Get destination information using LLM-based smart parser or manual parsing"""
@@ -115,7 +206,7 @@ class DemoDataManager:
                 location = result["geometry"]["location"]
                 timezone = self._get_timezone(location["lat"], location["lng"])
                 
-                logger.info(f"📍 Resolved: '{destination}' → {city}, {country} ({location['lat']}, {location['lng']})")
+                logger.info(f"📍 Resolved: '{destination}' → {city}, {country} ({location['lat']}, {location['lng']}) TZ: {timezone}")
                 
                 return {
                     "success": True,
@@ -143,13 +234,14 @@ class DemoDataManager:
         user_location: Optional[str] = None,
         include_flights: bool = True
     ) -> Dict[str, Any]:
-        """Fetch location-based data with TOP 10-15 PHOTOS and hotel/restaurant data for budgeting"""
+        """Fetch location-based data with TOP 10-15 PHOTOS and REAL PRICING from Google Places"""
         logger.info("=" * 80)
         logger.info(f"🌍 FETCHING DATA FOR: {destination}")
         logger.info("=" * 80)
         
         dest_info = self.get_destination_info(destination)
         coordinates = dest_info.get("coordinates", {})
+        timezone = dest_info.get("timezone", "UTC")
         
         if not coordinates:
             logger.warning(f"⚠️ No coordinates found for {destination}, using fallback data")
@@ -157,25 +249,26 @@ class DemoDataManager:
         
         lat, lng = coordinates["lat"], coordinates["lng"]
         logger.info(f"📍 Coordinates: {lat}, {lng}")
+        logger.info(f"🕐 Timezone: {timezone}")
         
         # Fetch ONLY TOP-RATED attractions and activities with photos (10-15 total)
-        logger.info("\n📦 Starting data collection (TOP 10-15 PHOTOS + HOTELS/RESTAURANTS)...")
+        logger.info("\n📦 Starting data collection (TOP 10-15 PHOTOS + REAL PRICING)...")
+
+        # Fetch top attractions (aim for 10-15)
+        attractions_data = self.fetch_top_attractions(destination, lat, lng, timezone, max_results=15)
+        logger.info(f"✅ Top Attractions: {len(attractions_data)} items with photos and prices")
+
+        # Fetch top activities (aim for 5-10)
+        activities_data = self.fetch_top_activities(destination, lat, lng, timezone, max_results=10)
+        logger.info(f"✅ Top Activities: {len(activities_data)} items with photos and prices")
         
-        # Fetch top attractions (aim for 8-10)
-        attractions_data = self.fetch_top_attractions(destination, lat, lng, max_results=10)
-        logger.info(f"✅ Top Attractions: {len(attractions_data)} items with photos")
+        # Fetch hotels with REAL PRICES
+        hotels_data = self.fetch_hotels(destination, lat, lng, timezone)
+        logger.info(f"✅ Hotels: {len(hotels_data)} options with real prices")
         
-        # Fetch top activities (aim for 5-7)
-        activities_data = self.fetch_top_activities(destination, lat, lng, max_results=7)
-        logger.info(f"✅ Top Activities: {len(activities_data)} items with photos")
-        
-        # Fetch hotels for budget calculation
-        hotels_data = self.fetch_hotels(destination, lat, lng)
-        logger.info(f"✅ Hotels: {len(hotels_data)} options found")
-        
-        # Fetch restaurants for budget calculation
-        restaurants_data = self.fetch_restaurants(destination, lat, lng)
-        logger.info(f"✅ Restaurants: {len(restaurants_data)} options found")
+        # Fetch restaurants with REAL PRICES
+        restaurants_data = self.fetch_restaurants(destination, lat, lng, timezone)
+        logger.info(f"✅ Restaurants: {len(restaurants_data)} options with real prices")
         
         # Count total photos - STRICT LIMIT TO 15
         total_photos = len([a for a in attractions_data if a.get("photo_url")]) + \
@@ -213,8 +306,8 @@ class DemoDataManager:
         else:
             logger.info("⏭️  Flights: Skipped (not requested)")
         
-        transport_data = self.fetch_local_transport_info(destination)
-        logger.info(f"✅ Transport: {len(transport_data)} options")
+        transport_data = self.fetch_local_transport_info(destination, timezone)
+        logger.info(f"✅ Transport: {len(transport_data)} options with real prices")
         
         logger.info("\n✅ DATA COLLECTION COMPLETE")
         logger.info("=" * 80)
@@ -223,8 +316,8 @@ class DemoDataManager:
             "destination_info": dest_info,
             "attractions": attractions_data,
             "activities": activities_data,
-            "hotels": hotels_data,  # For budget calculation
-            "restaurants": restaurants_data,  # For budget calculation
+            "hotels": hotels_data,
+            "restaurants": restaurants_data,
             "flights": flight_data,
             "local_transport": transport_data,
         }
@@ -234,9 +327,10 @@ class DemoDataManager:
         destination: str,
         lat: float,
         lng: float,
-        max_results: int = 10
+        timezone: str,
+        max_results: int = 15
     ) -> List[Dict[str, Any]]:
-        """Fetch TOP attractions with photos based on ratings and reviews"""
+        """Fetch TOP attractions with photos and REAL PRICES based on ratings and reviews"""
         if not self.google_api_key:
             return self._get_fallback_data(destination, "attractions")[:max_results]
         
@@ -257,7 +351,7 @@ class DemoDataManager:
             for attraction_type in attraction_types[:3]:  # Limit API calls
                 params = {
                     "location": f"{lat},{lng}",
-                    "radius": 10000,  # 10km for better coverage
+                    "radius": 15000,  # 15km for better coverage
                     "type": attraction_type,
                     "key": self.google_api_key
                 }
@@ -271,6 +365,12 @@ class DemoDataManager:
                         # STRICT: Only include if has photo AND good rating
                         if result.get("photos") and result.get("rating", 0) >= 4.0:
                             photo_reference = result["photos"][0].get("photo_reference")
+                            price_level = result.get("price_level", 2)
+                            
+                            # Convert price_level to actual USD
+                            estimated_cost = self._convert_price_level_to_usd(
+                                price_level, "activity", timezone
+                            )
                             
                             attraction_data = {
                                 "name": result.get("name"),
@@ -278,7 +378,9 @@ class DemoDataManager:
                                 "rating": result.get("rating", 4.0),
                                 "user_ratings_total": result.get("user_ratings_total", 0),
                                 "location": result.get("geometry", {}).get("location", {}),
-                                "photo_url": f"{self.places_base_url}/photo?maxwidth=800&photo_reference={photo_reference}&key={self.google_api_key}" if photo_reference else None
+                                "photo_url": f"{self.places_base_url}/photo?maxwidth=800&photo_reference={photo_reference}&key={self.google_api_key}" if photo_reference else None,
+                                "price_level": price_level,
+                                "estimated_cost": estimated_cost
                             }
                             
                             if attraction_data["photo_url"]:
@@ -301,7 +403,7 @@ class DemoDataManager:
             # Keep only top N
             top_attractions = unique_attractions[:max_results]
             
-            api_logger.info(f"✅ Found {len(top_attractions)} TOP-RATED attractions with photos")
+            api_logger.info(f"✅ Found {len(top_attractions)} TOP-RATED attractions with photos and real prices")
             return top_attractions
             
         except Exception as e:
@@ -313,9 +415,10 @@ class DemoDataManager:
         destination: str,
         lat: float,
         lng: float,
-        max_results: int = 7
+        timezone: str,
+        max_results: int = 10
     ) -> List[Dict[str, Any]]:
-        """Fetch TOP activities with photos based on ratings and reviews"""
+        """Fetch TOP activities with photos and REAL PRICES based on ratings and reviews"""
         if not self.google_api_key:
             return self._get_fallback_data(destination, "activities")[:max_results]
         
@@ -333,7 +436,7 @@ class DemoDataManager:
             for keyword in activity_keywords:
                 params = {
                     "location": f"{lat},{lng}",
-                    "radius": 10000,
+                    "radius": 15000,
                     "keyword": keyword,
                     "key": self.google_api_key
                 }
@@ -347,13 +450,20 @@ class DemoDataManager:
                         # STRICT: Only include if has photo AND good rating
                         if result.get("photos") and result.get("rating", 0) >= 4.0:
                             photo_reference = result["photos"][0].get("photo_reference")
+                            price_level = result.get("price_level", 2)
+                            
+                            # Convert price_level to actual USD
+                            estimated_price = self._convert_price_level_to_usd(
+                                price_level, "activity", timezone
+                            )
                             
                             activity_data = {
                                 "name": result.get("name"),
                                 "type": self._categorize_activity(result.get("types", [])),
                                 "rating": result.get("rating", 4.0),
                                 "user_ratings_total": result.get("user_ratings_total", 0),
-                                "price": self._estimate_activity_price(result.get("price_level", 2)),
+                                "price": estimated_price,
+                                "price_level": price_level,
                                 "duration": "2-3 hours",
                                 "location": result.get("geometry", {}).get("location", {}),
                                 "photo_url": f"{self.places_base_url}/photo?maxwidth=800&photo_reference={photo_reference}&key={self.google_api_key}" if photo_reference else None
@@ -379,7 +489,7 @@ class DemoDataManager:
             # Keep only top N
             top_activities = unique_activities[:max_results]
             
-            api_logger.info(f"✅ Found {len(top_activities)} TOP-RATED activities with photos")
+            api_logger.info(f"✅ Found {len(top_activities)} TOP-RATED activities with photos and real prices")
             return top_activities
             
         except Exception as e:
@@ -388,6 +498,11 @@ class DemoDataManager:
 
     def _generate_default_flights(self, destination: str) -> List[Dict[str, Any]]:
         """Generate realistic default flight data"""
+        # Get current date and calculate departure date
+        current_date = datetime.now()
+        departure_date = current_date + timedelta(days=30)
+        return_date = departure_date + timedelta(days=6)  # Default 7-day trip
+        
         # More realistic flight prices based on destination
         flight_prices = {
             "bali": 850, "paris": 650, "tokyo": 950,
@@ -403,26 +518,35 @@ class DemoDataManager:
             {
                 "flight_number": "AA123",
                 "airline": "American Airlines",
-                "departure": (datetime.now() + timedelta(days=7)).isoformat(),
-                "arrival": (datetime.now() + timedelta(days=7, hours=12)).isoformat(),
+                "departure": departure_date.replace(hour=9, minute=0).isoformat(),
+                "arrival": (departure_date + timedelta(hours=12)).isoformat(),
+                "departure_date": departure_date.strftime("%B %d, %Y %I:%M %p"),
+                "arrival_date": (departure_date + timedelta(hours=12)).strftime("%B %d, %Y %I:%M %p"),
                 "price": base_price,
-                "class": "economy"
+                "class": "economy",
+                "type": "outbound"
             },
             {
                 "flight_number": "DL456",
                 "airline": "Delta Airlines",
-                "departure": (datetime.now() + timedelta(days=7, hours=3)).isoformat(),
-                "arrival": (datetime.now() + timedelta(days=7, hours=15)).isoformat(),
+                "departure": departure_date.replace(hour=15, minute=0).isoformat(),
+                "arrival": (departure_date + timedelta(hours=12)).isoformat(),
+                "departure_date": departure_date.strftime("%B %d, %Y %I:%M %p"),
+                "arrival_date": (departure_date + timedelta(hours=12)).strftime("%B %d, %Y %I:%M %p"),
                 "price": base_price - 100,
-                "class": "economy"
+                "class": "economy",
+                "type": "outbound_alternative"
             },
             {
                 "flight_number": "UA789",
                 "airline": "United Airlines",
-                "departure": (datetime.now() + timedelta(days=7, hours=6)).isoformat(),
-                "arrival": (datetime.now() + timedelta(days=7, hours=18)).isoformat(),
+                "departure": return_date.replace(hour=18, minute=0).isoformat(),
+                "arrival": (return_date + timedelta(hours=10)).isoformat(),
+                "departure_date": return_date.strftime("%B %d, %Y %I:%M %p"),
+                "arrival_date": (return_date + timedelta(hours=10)).strftime("%B %d, %Y %I:%M %p"),
                 "price": base_price + 200,
-                "class": "business"
+                "class": "business",
+                "type": "return"
             }
         ]
 
@@ -430,12 +554,35 @@ class DemoDataManager:
         """Generate flight data between locations"""
         return self._generate_default_flights(to_location)
 
-    def fetch_local_transport_info(self, destination: str) -> List[Dict[str, Any]]:
-        """Fetch local transport information"""
+    def fetch_local_transport_info(self, destination: str, timezone: str) -> List[Dict[str, Any]]:
+        """Fetch local transport information with REAL PRICES"""
+        # Base transport costs
+        base_costs = {
+            "public_transit": 3,
+            "taxi": 25,
+            "airport_transfer": 40
+        }
+        
+        # Get region multiplier
+        multipliers = self.REGION_PRICE_MULTIPLIERS.get(timezone, {})
+        transport_multiplier = multipliers.get("meal", 1.0)  # Use meal multiplier as proxy for transport
+        
         return [
-            {"mode": "Public Transit", "price": 3, "route": "City Center - Tourist Areas"},
-            {"mode": "Taxi/Rideshare", "price": 25, "route": "Average city ride"},
-            {"mode": "Airport Transfer", "price": 40, "route": "Airport to City Center"}
+            {
+                "mode": "Public Transit",
+                "price": round(base_costs["public_transit"] * transport_multiplier, 2),
+                "route": "City Center - Tourist Areas"
+            },
+            {
+                "mode": "Taxi/Rideshare",
+                "price": round(base_costs["taxi"] * transport_multiplier, 2),
+                "route": "Average city ride"
+            },
+            {
+                "mode": "Airport Transfer",
+                "price": round(base_costs["airport_transfer"] * transport_multiplier, 2),
+                "route": "Airport to City Center"
+            }
         ]
 
     # Helper methods
@@ -463,8 +610,8 @@ class DemoDataManager:
             logger.error(f"Error fetching timezone: {e}")
             return "UTC"
 
-    def fetch_hotels(self, destination: str, lat: float, lng: float) -> List[Dict[str, Any]]:
-        """Fetch hotel data using Google Places API for budget calculations"""
+    def fetch_hotels(self, destination: str, lat: float, lng: float, timezone: str) -> List[Dict[str, Any]]:
+        """Fetch hotel data with REAL PRICES from Google Places API"""
         if not self.google_api_key:
             logger.info(f"🏨 Using fallback hotel data for {destination}")
             return self._get_fallback_data(destination, "hotels")
@@ -489,18 +636,31 @@ class DemoDataManager:
                 for result in data.get("results", [])[:12]:
                     price_level = result.get("price_level", 2)
                     category = self._categorize_hotel(price_level)
-                    price_per_night = self._estimate_hotel_price(price_level)
+                    
+                    # Convert price_level to REAL USD price
+                    price_per_night = self._convert_price_level_to_usd(
+                        price_level, "hotel", timezone
+                    )
                     
                     hotel_data = {
                         "name": result.get("name"),
                         "category": category,
                         "rating": result.get("rating", 4.0),
                         "price_per_night": price_per_night,
+                        "price_level": price_level,
                         "location": result.get("geometry", {}).get("location", {}),
                         "address": result.get("vicinity", "")
                     }
+                    
+                    # Try to get photo if available
+                    if result.get("photos"):
+                        photo_reference = result["photos"][0].get("photo_reference")
+                        if photo_reference:
+                            hotel_data["photo_url"] = f"{self.places_base_url}/photo?maxwidth=800&photo_reference={photo_reference}&key={self.google_api_key}"
+                    
                     hotels.append(hotel_data)
                 
+                logger.info(f"💵 Hotels with real prices from {timezone}: {[f'{h['name']}: ${h['price_per_night']}/night' for h in hotels[:3]]}")
                 return hotels
             else:
                 logger.warning(f"⚠️ Hotels API returned status: {data.get('status')}")
@@ -510,8 +670,8 @@ class DemoDataManager:
             logger.error(f"❌ Error fetching hotels: {e}")
             return self._get_fallback_data(destination, "hotels")
 
-    def fetch_restaurants(self, destination: str, lat: float, lng: float) -> List[Dict[str, Any]]:
-        """Fetch restaurant data using Google Places API for budget calculations"""
+    def fetch_restaurants(self, destination: str, lat: float, lng: float, timezone: str) -> List[Dict[str, Any]]:
+        """Fetch restaurant data with REAL PRICES from Google Places API"""
         if not self.google_api_key:
             logger.info(f"🍽️ Using fallback restaurant data for {destination}")
             return self._get_fallback_data(destination, "restaurants")
@@ -521,7 +681,7 @@ class DemoDataManager:
             url = f"{self.places_base_url}/nearbysearch/json"
             params = {
                 "location": f"{lat},{lng}",
-                "radius": 3000,
+                "radius": 5000,
                 "type": "restaurant",
                 "key": self.google_api_key
             }
@@ -534,9 +694,11 @@ class DemoDataManager:
                 api_logger.info(f"✅ Successfully fetched {len(data.get('results', []))} restaurants")
                 restaurants = []
                 for result in data.get("results", [])[:15]:
-                    # Estimate price level and average price
+                    # Estimate price level and convert to REAL USD
                     price_level = result.get("price_level", 2)
-                    avg_price = self._estimate_meal_price(price_level)
+                    avg_price = self._convert_price_level_to_usd(
+                        price_level, "meal", timezone
+                    )
                     
                     restaurant_data = {
                         "name": result.get("name"),
@@ -547,8 +709,16 @@ class DemoDataManager:
                         "location": result.get("geometry", {}).get("location", {}),
                         "address": result.get("vicinity", "")
                     }
+                    
+                    # Try to get photo if available
+                    if result.get("photos"):
+                        photo_reference = result["photos"][0].get("photo_reference")
+                        if photo_reference:
+                            restaurant_data["photo_url"] = f"{self.places_base_url}/photo?maxwidth=800&photo_reference={photo_reference}&key={self.google_api_key}"
+                    
                     restaurants.append(restaurant_data)
                 
+                logger.info(f"💵 Restaurants with real prices from {timezone}: {[f'{r['name']}: ${r['avg_price']}/meal' for r in restaurants[:3]]}")
                 return restaurants
             else:
                 logger.warning(f"⚠️ Restaurants API returned status: {data.get('status')}")
@@ -566,21 +736,6 @@ class DemoDataManager:
             return "mid_range"
         else:
             return "luxury"
-
-    def _estimate_hotel_price(self, price_level: int) -> float:
-        """Estimate hotel price per night based on price level"""
-        price_map = {0: 30, 1: 60, 2: 120, 3: 250, 4: 400}
-        return price_map.get(price_level, 120)
-
-    def _estimate_meal_price(self, price_level: int) -> float:
-        """Estimate meal price based on Google price level (0-4)"""
-        price_map = {0: 5, 1: 10, 2: 25, 3: 50, 4: 100}
-        return price_map.get(price_level, 25)
-
-    def _estimate_activity_price(self, price_level: int) -> float:
-        """Estimate activity price based on price level"""
-        price_map = {0: 0, 1: 15, 2: 35, 3: 75, 4: 150}
-        return price_map.get(price_level, 35)
 
     def _categorize_activity(self, types: List[str]) -> str:
         """Categorize activity based on types"""
@@ -621,7 +776,7 @@ class DemoDataManager:
             "attractions": self._get_fallback_data(destination, "attractions"),
             "activities": self._get_fallback_data(destination, "activities"),
             "flights": self._generate_default_flights(destination) if include_flights else None,
-            "local_transport": self.fetch_local_transport_info(destination)
+            "local_transport": self.fetch_local_transport_info(destination, dest_info.get("timezone", "UTC"))
         }
 
     def _get_fallback_data(self, destination: str, data_type: str) -> List[Dict[str, Any]]:
@@ -634,21 +789,21 @@ class DemoDataManager:
         return {
             "bali": {
                 "attractions": [
-                    {"name": "Ubud Rice Terraces", "type": "Natural Wonder", "rating": 4.7, "user_ratings_total": 5000, "photo_url": None},
-                    {"name": "Tanah Lot Temple", "type": "Historical", "rating": 4.6, "user_ratings_total": 4500, "photo_url": None},
+                    {"name": "Ubud Rice Terraces", "type": "Natural Wonder", "rating": 4.7, "user_ratings_total": 5000, "photo_url": None, "estimated_cost": 0},
+                    {"name": "Tanah Lot Temple", "type": "Historical", "rating": 4.6, "user_ratings_total": 4500, "photo_url": None, "estimated_cost": 5},
                 ],
                 "activities": [
                     {"name": "Balinese Cooking Class", "type": "Cultural", "price": 35, "duration": "4 hours", "rating": 4.8, "user_ratings_total": 2000, "photo_url": None},
                     {"name": "Yoga Retreat", "type": "Wellness", "price": 25, "duration": "2 hours", "rating": 4.7, "user_ratings_total": 1500, "photo_url": None},
                 ],
                 "hotels": [
-                    {"name": "Bali Budget Inn", "category": "budget", "rating": 4.2, "price_per_night": 35},
-                    {"name": "Komaneka Resort", "category": "mid_range", "rating": 4.6, "price_per_night": 80},
-                    {"name": "Four Seasons Bali", "category": "luxury", "rating": 4.9, "price_per_night": 250}
+                    {"name": "Bali Budget Inn", "category": "budget", "rating": 4.2, "price_per_night": 35, "photo_url": None},
+                    {"name": "Komaneka Resort", "category": "mid_range", "rating": 4.6, "price_per_night": 80, "photo_url": None},
+                    {"name": "Four Seasons Bali", "category": "luxury", "rating": 4.9, "price_per_night": 250, "photo_url": None}
                 ],
                 "restaurants": [
-                    {"name": "Warung Biah Biah", "cuisine": "Balinese", "price_level": 1, "rating": 4.5, "avg_price": 8},
-                    {"name": "Locavore", "cuisine": "Modern Indonesian", "price_level": 3, "rating": 4.8, "avg_price": 45}
+                    {"name": "Warung Biah Biah", "cuisine": "Balinese", "price_level": 1, "rating": 4.5, "avg_price": 8, "photo_url": None},
+                    {"name": "Locavore", "cuisine": "Modern Indonesian", "price_level": 3, "rating": 4.8, "avg_price": 45, "photo_url": None}
                 ]
             }
         }

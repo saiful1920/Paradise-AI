@@ -10,6 +10,7 @@ __pycache__/
 
 # Database files
 video_db.sqlite
+video_sessions.db
 
 # Uploaded files
 uploads/
@@ -20,6 +21,8 @@ videos/
 # Extra files
 video_service2.py
 video_service3.py
+video_service4.py
+video_service5.py
 
 
 

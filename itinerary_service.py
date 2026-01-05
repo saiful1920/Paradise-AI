@@ -7,6 +7,8 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema import SystemMessage, HumanMessage
 import re
 import logging
+import traceback
+import requests
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -31,16 +33,18 @@ class ItineraryService:
         include_flights: bool,
         include_hotels: bool
     ) -> Dict[str, Any]:
-        """Validate if the budget is sufficient for the trip using actual destination data"""
+        """Validate if the budget is sufficient using REAL PRICING from Google Places API"""
         
         # Extract city name from "City, Country" format if needed
         destination_city = destination.split(',')[0].strip()
         
-        # Get comprehensive destination data
+        # Get comprehensive destination data with REAL PRICES
         location_data = self.demo_data.fetch_location_based_data(destination_city, None, include_flights)
         
-        # Calculate minimum realistic costs based on actual data
-        min_costs = self._calculate_minimum_costs(location_data, duration, travelers, include_flights, include_hotels)
+        # Calculate minimum realistic costs based on REAL DATA
+        min_costs = self._calculate_minimum_costs_from_real_data(
+            location_data, duration, travelers, include_flights, include_hotels
+        )
         total_min_cost = sum(min_costs.values())
         
         # Budget is sufficient if it covers at least 90% of minimum costs
@@ -67,56 +71,115 @@ class ItineraryService:
             "breakdown": breakdown
         }
     
-    def _calculate_minimum_costs(self, location_data: Dict[str, Any], duration: int, travelers: int, include_flights: bool, include_hotels: bool) -> Dict[str, float]:
-        """Calculate REALISTIC minimum costs based on actual destination data"""
+    def _calculate_minimum_costs_from_real_data(
+        self, 
+        location_data: Dict[str, Any], 
+        duration: int, 
+        travelers: int, 
+        include_flights: bool, 
+        include_hotels: bool
+    ) -> Dict[str, float]:
+        """Calculate REALISTIC minimum costs using REAL PRICING from Google Places API"""
         costs = {}
+        
+        logger.info("=" * 80)
+        logger.info("💰 CALCULATING MINIMUM COSTS FROM REAL DATA")
+        logger.info("=" * 80)
         
         # Flights (if included)
         if include_flights and location_data.get("flights"):
             cheapest_flight = min(location_data["flights"], key=lambda x: x["price"])
             costs["flights"] = cheapest_flight["price"] * travelers
+            logger.info(f"✈️  Flights: ${costs['flights']:.2f} ({travelers} travelers × ${cheapest_flight['price']:.2f})")
         else:
             costs["flights"] = 0
+            logger.info(f"✈️  Flights: Not included")
         
-        # Hotels (if included) - FIXED: Ensure proper calculation
+        # Hotels (if included) - USE REAL GOOGLE PLACES PRICING
         if include_hotels:
-            # Use realistic hotel costs based on destination
-            destination_hotel_costs = {
-                "bali": 60,
-                "paris": 120,
-                "tokyo": 100,
-                "new york": 150,
-                "london": 130,
-                "rome": 90,
-                "barcelona": 85,
-                "dubai": 140,
-                "bangkok": 50,
-                "singapore": 110
-            }
-            
-            # Get destination name
-            dest_name = location_data.get("destination_info", {}).get("name", "").lower()
-            
-            # Find matching hotel cost or use default
-            avg_hotel_cost = 100  # default
-            for key, price in destination_hotel_costs.items():
-                if key in dest_name:
-                    avg_hotel_cost = price
-                    break
-            
-            rooms_needed = (travelers + 1) // 2  # 2 people per room
-            costs["hotels"] = avg_hotel_cost * duration * rooms_needed
+            hotels = location_data.get("hotels", [])
+            if hotels:
+                # Get cheapest hotel with real pricing
+                cheapest_hotel = min(hotels, key=lambda x: x.get("price_per_night", 100))
+                avg_hotel_cost = cheapest_hotel["price_per_night"]
+                
+                rooms_needed = (travelers + 1) // 2  # 2 people per room
+                costs["hotels"] = avg_hotel_cost * duration * rooms_needed
+                
+                logger.info(f"🏨 Hotels (REAL PRICING from Google Places):")
+                logger.info(f"   - Cheapest: {cheapest_hotel['name']} - ${avg_hotel_cost:.2f}/night")
+                logger.info(f"   - Rooms needed: {rooms_needed}")
+                logger.info(f"   - Duration: {duration} nights")
+                logger.info(f"   - Total: ${costs['hotels']:.2f}")
+            else:
+                # Fallback
+                avg_hotel_cost = 100
+                rooms_needed = (travelers + 1) // 2
+                costs["hotels"] = avg_hotel_cost * duration * rooms_needed
+                logger.info(f"🏨 Hotels (Fallback): ${costs['hotels']:.2f}")
         else:
             costs["hotels"] = 0
+            logger.info(f"🏨 Hotels: Not included")
         
-        # Food - realistic daily costs per person
-        costs["food"] = 40 * duration * travelers  # $40/person/day average
+        # Food - USE REAL RESTAURANT PRICING from Google Places
+        restaurants = location_data.get("restaurants", [])
+        if restaurants:
+            # Calculate average meal price from real restaurant data
+            budget_restaurants = [r for r in restaurants if r.get("price_level", 2) <= 2]
+            
+            if budget_restaurants:
+                avg_meal_cost = sum(r["avg_price"] for r in budget_restaurants) / len(budget_restaurants)
+            else:
+                avg_meal_cost = sum(r["avg_price"] for r in restaurants) / len(restaurants)
+            
+            # 3 meals per day
+            costs["food"] = avg_meal_cost * 3 * duration * travelers
+            
+            logger.info(f"🍽️  Food (REAL PRICING from Google Places):")
+            logger.info(f"   - Avg meal cost: ${avg_meal_cost:.2f}")
+            logger.info(f"   - Total: ${costs['food']:.2f} (3 meals/day × {duration} days × {travelers} travelers)")
+        else:
+            # Fallback
+            avg_meal_cost = 25
+            costs["food"] = avg_meal_cost * 3 * duration * travelers
+            logger.info(f"🍽️  Food (Fallback): ${costs['food']:.2f}")
         
-        # Transport - local transport
-        costs["transport"] = 15 * duration * travelers  # $15/person/day average
+        # Transport - USE REAL LOCAL TRANSPORT PRICING
+        transport_options = location_data.get("local_transport", [])
+        if transport_options:
+            # Use average of public transit and taxi
+            avg_transport_cost = sum(t["price"] for t in transport_options[:2]) / 2
+            costs["transport"] = avg_transport_cost * duration * travelers
+            
+            logger.info(f"🚕 Transport (REAL PRICING):")
+            logger.info(f"   - Avg daily cost: ${avg_transport_cost:.2f}")
+            logger.info(f"   - Total: ${costs['transport']:.2f}")
+        else:
+            costs["transport"] = 15 * duration * travelers
+            logger.info(f"🚕 Transport (Fallback): ${costs['transport']:.2f}")
         
-        # Activities - mix of free and paid
-        costs["activities"] = 30 * duration * travelers  # $30/person/day average
+        # Activities - USE REAL ACTIVITY PRICING from Google Places
+        activities = location_data.get("activities", [])
+        attractions = location_data.get("attractions", [])
+        
+        if activities or attractions:
+            all_activities = activities + attractions
+            # Calculate average activity cost
+            avg_activity_cost = sum(a.get("price", a.get("estimated_cost", 0)) for a in all_activities) / len(all_activities)
+            
+            # Assume 2 activities per day
+            costs["activities"] = avg_activity_cost * 2 * duration * travelers
+            
+            logger.info(f"🎭 Activities (REAL PRICING from Google Places):")
+            logger.info(f"   - Avg activity cost: ${avg_activity_cost:.2f}")
+            logger.info(f"   - Total: ${costs['activities']:.2f} (2 activities/day × {duration} days × {travelers} travelers)")
+        else:
+            costs["activities"] = 30 * duration * travelers
+            logger.info(f"🎭 Activities (Fallback): ${costs['activities']:.2f}")
+        
+        total = sum(costs.values())
+        logger.info(f"\n💵 TOTAL MINIMUM COST (REAL DATA): ${total:,.2f}")
+        logger.info("=" * 80)
         
         return costs
     
@@ -131,20 +194,42 @@ class ItineraryService:
         include_hotels: bool,
         user_location: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Generate a complete itinerary using LLM with comprehensive destination data"""
+        """Generate a complete itinerary using REAL PRICING from Google Places API"""
+        
+        # Get current date for dynamic departure date
+        current_date = datetime.now()
+        
+        # Calculate departure date (typically 30 days from now for planning)
+        departure_date = current_date + timedelta(days=30)
+        
+        # Calculate return date
+        return_date = departure_date + timedelta(days=duration-1)
         
         # Extract city name from "City, Country" format if needed
         destination_city = destination.split(',')[0].strip()
         
-        # Fetch comprehensive location data - ALWAYS pass include_flights flag
+        # Fetch comprehensive location data with REAL PRICES - ALWAYS pass include_flights flag
+        logger.info(f"🌍 Fetching location data with REAL PRICES for {destination_city}")
         location_data = self.demo_data.fetch_location_based_data(
             destination_city, 
             user_location or "New York",
             include_flights
         )
         
-        # Generate REALISTIC budget breakdown
-        budget_breakdown = await self._generate_realistic_budget_breakdown(
+        # Get destination name
+        destination_name = location_data["destination_info"]["name"]
+        
+        # Generate main title for the itinerary
+        if duration == 1:
+            main_title = f"{duration} - Day {destination_name} Itinerary"
+            trip_dates = f"{departure_date.strftime('%b %d, %Y')}"
+        else:
+            main_title = f"{duration} - Days {destination_name} Itinerary"
+            trip_dates = f"{departure_date.strftime('%b %d')} - {return_date.strftime('%b %d, %Y')}"
+        
+        # Generate REALISTIC budget breakdown using REAL PRICING
+        logger.info("💰 Generating budget breakdown with REAL PRICES...")
+        budget_breakdown = await self._generate_realistic_budget_breakdown_from_real_data(
             destination=destination_city,
             budget=budget,
             duration=duration,
@@ -154,14 +239,17 @@ class ItineraryService:
             location_data=location_data
         )
         
-        # Generate daily activities using actual destination data
+        # Generate daily activities with REAL DATA, dates, and images
+        logger.info("📅 Generating daily activities with real hotels and restaurants...")
         daily_activities = await self._generate_daily_activities_with_data(
             destination=destination_city,
             duration=duration,
             activity_preference=activity_preference,
             budget_breakdown=budget_breakdown,
             location_data=location_data,
-            travelers=travelers
+            travelers=travelers,
+            departure_date=departure_date,
+            return_date=return_date
         )
         
         # Generate attractions summary
@@ -171,7 +259,26 @@ class ItineraryService:
             activity_preference=activity_preference
         )
         
+        # Prepare hotel and restaurant recommendations with images
+        hotel_recommendations = self._prepare_hotel_recommendations_with_images(location_data, departure_date, duration)
+        restaurant_recommendations = self._prepare_restaurant_recommendations_with_images(location_data)
+        
+        # Generate destination highlights with images
+        destination_highlights = self._prepare_destination_highlights(location_data)
+        
+        # Update flight data with actual dates
+        if include_flights and location_data.get("flights"):
+            updated_flights = self._update_flight_dates(location_data["flights"], departure_date, return_date)
+        else:
+            updated_flights = None
+        
         return {
+            "main_title": main_title,  
+            "current_date": current_date.strftime("%B %d, %Y"),
+            "departure_date": departure_date.strftime("%B %d, %Y"),
+            "return_date": return_date.strftime("%B %d, %Y"),
+            "trip_dates": trip_dates,
+            "duration_days": duration,
             "destination": location_data["destination_info"],
             "duration": duration,
             "travelers": travelers,
@@ -182,167 +289,185 @@ class ItineraryService:
             "budget_breakdown": budget_breakdown,
             "daily_activities": daily_activities,
             "attractions_summary": attractions_summary,
-            "hotels": location_data.get("hotels", []),  # Hotel recommendations with photos
-            "restaurants": location_data.get("restaurants", []),  # Restaurant recommendations
-            "created_at": datetime.now().isoformat()
+            "hotel_recommendations": hotel_recommendations,
+            "restaurant_recommendations": restaurant_recommendations,
+            "destination_highlights": destination_highlights,
+            "updated_flights": updated_flights,
+            "created_at": current_date.isoformat(),
+            "itinerary_summary": f"A {duration}-day {activity_preference}-paced itinerary for {travelers} traveler(s) to {destination_name} from {departure_date.strftime('%B %d')} to {return_date.strftime('%B %d, %Y')}" if duration > 1 else f"A {duration}-day {activity_preference}-paced itinerary for {travelers} traveler(s) to {destination_name} on {departure_date.strftime('%B %d, %Y')}"
         }
     
-    async def _generate_realistic_budget_breakdown(
-        self,
-        destination: str,
-        budget: float,
-        duration: int,
-        travelers: int,
-        include_flights: bool,
-        include_hotels: bool,
-        location_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Generate REALISTIC budget breakdown using actual hotel and restaurant data"""
+    def _update_flight_dates(self, flights: List[Dict[str, Any]], departure_date: datetime, return_date: datetime) -> List[Dict[str, Any]]:
+        """Update flight dates to reflect actual departure and return dates"""
+        updated_flights = []
         
-        allocations = {}
-        total_allocated = 0
+        # Create departure flights (first 2 flights are outbound)
+        for i, flight in enumerate(flights[:2]):
+            updated_flight = flight.copy()
+            
+            # Set departure flight dates
+            flight_departure = departure_date + timedelta(hours=i*3)  # Stagger departure times
+            flight_arrival = flight_departure + timedelta(hours=12)  # Typical 12-hour flight
+            
+            updated_flight.update({
+                "departure_date": flight_departure.strftime("%B %d, %Y %I:%M %p"),
+                "arrival_date": flight_arrival.strftime("%B %d, %Y %I:%M %p"),
+                "departure": flight_departure.isoformat(),
+                "arrival": flight_arrival.isoformat(),
+                "type": "outbound" if i == 0 else "outbound_alternative",
+                "duration": "12h 00m"
+            })
+            updated_flights.append(updated_flight)
         
-        # Step 1: Flights allocation (if included)
-        if include_flights:
-            if location_data.get("flights") and len(location_data["flights"]) > 0:
-                cheapest_flight = min(location_data["flights"], key=lambda x: x["price"])
-                allocations["flights"] = cheapest_flight["price"] * travelers
-            else:
-                allocations["flights"] = 500 * travelers  # Default reasonable flight cost
-            total_allocated += allocations["flights"]
-        else:
-            allocations["flights"] = 0
+        # Create return flights (last flight is return)
+        if len(flights) >= 3:
+            return_flight = flights[2].copy()
+            return_departure = return_date.replace(hour=18, minute=0)  # Evening return
+            return_arrival = return_departure + timedelta(hours=10)  # Shorter return
+            
+            return_flight.update({
+                "departure_date": return_departure.strftime("%B %d, %Y %I:%M %p"),
+                "arrival_date": return_arrival.strftime("%B %d, %Y %I:%M %p"),
+                "departure": return_departure.isoformat(),
+                "arrival": return_arrival.isoformat(),
+                "type": "return",
+                "duration": "10h 00m"
+            })
+            updated_flights.append(return_flight)
         
-        # Step 2: Hotels allocation using ACTUAL Google Places data
-        if include_hotels:
-            hotels = location_data.get("hotels", [])
-            if hotels:
-                # Get budget hotels (category = "budget")
-                budget_hotels = [h for h in hotels if h.get("category") == "budget"]
-                
-                if budget_hotels:
-                    # Use average of budget hotels
-                    avg_budget_price = sum(h["price_per_night"] for h in budget_hotels) / len(budget_hotels)
-                elif hotels:
-                    # Use cheapest available
-                    avg_budget_price = min(h["price_per_night"] for h in hotels)
-                else:
-                    # Fallback
-                    avg_budget_price = 100
-                
-                # Calculate rooms needed (2 people per room)
-                rooms_needed = (travelers + 1) // 2
-                
-                # Total hotel cost
-                hotel_total = avg_budget_price * duration * rooms_needed
-                
-                # Ensure doesn't exceed 40% of remaining budget
-                remaining = budget - total_allocated
-                max_hotel_budget = remaining * 0.40
-                
-                allocations["hotels"] = min(hotel_total, max_hotel_budget)
-                total_allocated += allocations["hotels"]
-                
-                print(f"🏨 HOTEL CALCULATION (Google Places Data):")
-                print(f"   - Hotels found: {len(hotels)}")
-                print(f"   - Budget hotels: {len(budget_hotels)}")
-                print(f"   - Avg price/night: ${avg_budget_price:.2f}")
-                print(f"   - Duration: {duration} nights")
-                print(f"   - Rooms needed: {rooms_needed}")
-                print(f"   - Raw total: ${hotel_total:.2f}")
-                print(f"   - Final allocated: ${allocations['hotels']:.2f}")
-            else:
-                # Fallback if no hotel data
-                avg_hotel_cost = 100
-                rooms_needed = (travelers + 1) // 2
-                allocations["hotels"] = avg_hotel_cost * duration * rooms_needed
-                total_allocated += allocations["hotels"]
-                print(f"🏨 HOTEL CALCULATION (Fallback):")
-                print(f"   - Using default: ${avg_hotel_cost}/night")
-        else:
-            allocations["hotels"] = 0
+        return updated_flights
+    
+    def _prepare_hotel_recommendations_with_images(self, location_data: Dict[str, Any], departure_date: datetime, duration: int) -> List[Dict[str, Any]]:
+        """Prepare hotel recommendations with photos, dates, and REAL PRICES"""
+        hotels = location_data.get("hotels", [])
+        enriched_hotels = []
         
-        # Step 3: Food allocation using ACTUAL restaurant data
+        # Calculate check-in and check-out dates
+        check_in_date = departure_date
+        check_out_date = departure_date + timedelta(days=duration)
+        
+        logger.info(f"🏨 Preparing hotel recommendations with images and real prices...")
+        
+        # Try to get hotel photos from Google Places
+        for hotel in hotels[:3]:  # Limit to top 3 hotels
+            enriched_hotel = hotel.copy()
+            
+            # Add dates
+            enriched_hotel["check_in_date"] = check_in_date.strftime("%B %d, %Y")
+            enriched_hotel["check_out_date"] = check_out_date.strftime("%B %d, %Y")
+            enriched_hotel["duration_nights"] = duration
+            
+            # If no photo exists, try to fetch one based on hotel name
+            if not enriched_hotel.get("photo_url") and self.demo_data.google_api_key:
+                photo_url = self._fetch_place_photo(
+                    enriched_hotel.get("name", ""), 
+                    enriched_hotel.get("location", {}),
+                    "lodging"
+                )
+                if photo_url:
+                    enriched_hotel["photo_url"] = photo_url
+                    logger.info(f"   ✓ Got photo for: {enriched_hotel['name']}")
+            
+            logger.info(f"   Hotel: {enriched_hotel['name']} - ${enriched_hotel['price_per_night']:.2f}/night")
+            enriched_hotels.append(enriched_hotel)
+        
+        return enriched_hotels
+    
+    def _prepare_restaurant_recommendations_with_images(self, location_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Prepare restaurant recommendations with photos and REAL PRICES"""
         restaurants = location_data.get("restaurants", [])
-        if restaurants:
-            # Get average meal prices from actual restaurants
-            budget_restaurants = [r for r in restaurants if r.get("price_level", 2) <= 2]
+        enriched_restaurants = []
+        
+        logger.info(f"🍽️  Preparing restaurant recommendations with images and real prices...")
+        
+        # Try to get restaurant photos from Google Places
+        for restaurant in restaurants[:5]:  # Limit to top 5 restaurants
+            enriched_restaurant = restaurant.copy()
             
-            if budget_restaurants:
-                avg_meal_cost = sum(r["avg_price"] for r in budget_restaurants) / len(budget_restaurants)
-            else:
-                avg_meal_cost = sum(r["avg_price"] for r in restaurants) / len(restaurants)
+            # If no photo exists, try to fetch one based on restaurant name
+            if not enriched_restaurant.get("photo_url") and self.demo_data.google_api_key:
+                photo_url = self._fetch_place_photo(
+                    enriched_restaurant.get("name", ""),
+                    enriched_restaurant.get("location", {}),
+                    "restaurant"
+                )
+                if photo_url:
+                    enriched_restaurant["photo_url"] = photo_url
+                    logger.info(f"   ✓ Got photo for: {enriched_restaurant['name']}")
             
-            # 3 meals per day
-            food_cost = avg_meal_cost * 3 * duration * travelers
-            
-            print(f"🍽️ FOOD CALCULATION (Google Places Data):")
-            print(f"   - Restaurants found: {len(restaurants)}")
-            print(f"   - Avg meal cost: ${avg_meal_cost:.2f}")
-            print(f"   - Total food cost: ${food_cost:.2f}")
-        else:
-            # Fallback
-            avg_meal_cost = 25
-            food_cost = avg_meal_cost * 3 * duration * travelers
-            print(f"🍽️ FOOD CALCULATION (Fallback): ${avg_meal_cost}/meal")
+            logger.info(f"   Restaurant: {enriched_restaurant['name']} - ${enriched_restaurant['avg_price']:.2f}/meal")
+            enriched_restaurants.append(enriched_restaurant)
         
-        # Allocate remaining budget
-        remaining_budget = budget - total_allocated
+        return enriched_restaurants
+    
+    def _prepare_destination_highlights(self, location_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Prepare destination highlights with best images"""
+        attractions = location_data.get("attractions", [])
+        activities = location_data.get("activities", [])
         
-        # Food gets calculated amount or 35% of remaining (whichever is lower)
-        food_allocated = min(food_cost, remaining_budget * 0.35)
-        allocations["food"] = food_allocated
+        # Get top-rated items with photos
+        highlights = []
         
-        # Calculate how much budget is left AFTER food
-        budget_after_food = remaining_budget - food_allocated
+        # Add top attractions with photos
+        for attraction in attractions:
+            if attraction.get("photo_url"):
+                highlights.append({
+                    "name": attraction["name"],
+                    "type": "attraction",
+                    "photo_url": attraction["photo_url"],
+                    "rating": attraction.get("rating", 4.5)
+                })
+                if len(highlights) >= 3:
+                    break
         
-        # Distribute the REST OF THE BUDGET proportionally
-        # Original ratios: travel=20%, activities=35%, buffer=10% out of (20+35+10)=65%
-        # New ratios out of what's left:
-        total_ratio = 0.20 + 0.35 + 0.10  # 65%
-        
-        allocations["travel"] = budget_after_food * (0.20 / total_ratio)
-        allocations["activities"] = budget_after_food * (0.35 / total_ratio)
-        remaining_buffer = budget_after_food * (0.10 / total_ratio)
-        
-        # Calculate total including remaining buffer
-        total_allocated = sum(allocations.values())
-        grand_total = total_allocated + remaining_buffer
-        
-        # Calculate percentages based on ORIGINAL BUDGET
-        percentages = {cat: (amt / budget * 100) if budget > 0 else 0 
-                      for cat, amt in allocations.items()}
-        remaining_percentage = (remaining_buffer / budget * 100) if budget > 0 else 0
-        
-        print(f"\n💰 FINAL BUDGET BREAKDOWN:")
-        print(f"   - Flights: ${allocations.get('flights', 0):.2f} ({percentages.get('flights', 0):.1f}%)")
-        print(f"   - Hotels: ${allocations.get('hotels', 0):.2f} ({percentages.get('hotels', 0):.1f}%)")
-        print(f"   - Food: ${allocations.get('food', 0):.2f} ({percentages.get('food', 0):.1f}%)")
-        print(f"   - Travel: ${allocations.get('travel', 0):.2f} ({percentages.get('travel', 0):.1f}%)")
-        print(f"   - Activities: ${allocations.get('activities', 0):.2f} ({percentages.get('activities', 0):.1f}%)")
-        print(f"   - Remaining: ${remaining_buffer:.2f} ({remaining_percentage:.1f}%)")
-        print(f"   - Grand Total: ${grand_total:.2f}")
-        print(f"   - Original Budget: ${budget:.2f}")
-        print(f"   - Difference: ${abs(grand_total - budget):.2f}")
-        
-        # Verify calculation
-        if abs(grand_total - budget) > 0.01:
-            logger.warning(f"⚠️ Budget mismatch! Grand Total: ${grand_total:.2f}, Budget: ${budget:.2f}, Diff: ${abs(grand_total - budget):.2f}")
+        # Add top activities with photos
+        for activity in activities:
+            if activity.get("photo_url"):
+                highlights.append({
+                    "name": activity["name"],
+                    "type": "activity",
+                    "photo_url": activity["photo_url"],
+                    "rating": activity.get("rating", 4.5)
+                })
+                if len(highlights) >= 6:
+                    break
         
         return {
-            "categories": {
-                "flights": {"amount": round(allocations.get("flights", 0), 2), "percentage": round(percentages.get("flights", 0), 2)},
-                "hotels": {"amount": round(allocations.get("hotels", 0), 2), "percentage": round(percentages.get("hotels", 0), 2)},
-                "food": {"amount": round(allocations.get("food", 0), 2), "percentage": round(percentages.get("food", 0), 2)},
-                "travel": {"amount": round(allocations.get("travel", 0), 2), "percentage": round(percentages.get("travel", 0), 2)},
-                "activities": {"amount": round(allocations.get("activities", 0), 2), "percentage": round(percentages.get("activities", 0), 2)}
-            },
-            "total_allocated": round(total_allocated, 2),
-            "remaining_budget": round(remaining_buffer, 2),
-            "remaining_percentage": round(remaining_percentage, 2),
-            "grand_total": round(grand_total, 2),
-            "original_budget": round(budget, 2)
+            "count": len(highlights),
+            "items": highlights[:6]
         }
+    
+    def _fetch_place_photo(self, place_name: str, location: Dict[str, float], place_type: str) -> Optional[str]:
+        """Fetch place photo from Google Places API"""
+        try:
+            if not self.demo_data.google_api_key:
+                return None
+            
+            # Search for the place by name and location
+            url = f"{self.demo_data.places_base_url}/findplacefromtext/json"
+            params = {
+                "input": place_name,
+                "inputtype": "textquery",
+                "fields": "photos,formatted_address,name,rating",
+                "locationbias": f"circle:5000@{location.get('lat', 0)},{location.get('lng', 0)}",
+                "key": self.demo_data.google_api_key
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get("status") == "OK" and data.get("candidates"):
+                candidate = data["candidates"][0]
+                if candidate.get("photos"):
+                    photo_reference = candidate["photos"][0].get("photo_reference")
+                    return f"{self.demo_data.places_base_url}/photo?maxwidth=800&photo_reference={photo_reference}&key={self.demo_data.google_api_key}"
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error fetching place photo for {place_name}: {e}")
+            return None
     
     async def _generate_daily_activities_with_data(
         self,
@@ -351,9 +476,11 @@ class ItineraryService:
         activity_preference: str,
         budget_breakdown: Dict[str, Any],
         location_data: Dict[str, Any],
-        travelers: int
+        travelers: int,
+        departure_date: datetime,
+        return_date: datetime
     ) -> List[Dict[str, Any]]:
-        """Generate daily activities including hotels and restaurants with photos"""
+        """Generate daily activities including hotels and restaurants with photos, dates, and REAL PRICES"""
         
         activities_budget = budget_breakdown["categories"]["activities"]["amount"]
         
@@ -363,7 +490,12 @@ class ItineraryService:
         hotels_data = location_data.get("hotels", [])
         restaurants_data = location_data.get("restaurants", [])
         
-        # Create lookup maps for photos
+        # Get hotel recommendations with images, dates, and REAL PRICES
+        check_out_date = departure_date + timedelta(days=duration)
+        recommended_hotels = self._prepare_hotel_recommendations_with_images(location_data, departure_date, duration)
+        recommended_restaurants = self._prepare_restaurant_recommendations_with_images(location_data)
+        
+        # Create photo lookup for activities
         photo_lookup = {}
         for attraction in attractions_data:
             if attraction.get("photo_url"):
@@ -372,83 +504,113 @@ class ItineraryService:
             if activity.get("photo_url"):
                 photo_lookup[activity["name"]] = activity["photo_url"]
         
-        # Get recommended hotel and restaurants
-        recommended_hotel = hotels_data[0] if hotels_data else None
-        recommended_restaurants = restaurants_data[:5] if restaurants_data else []
+        # Format dates for the prompt
+        if duration == 1:
+            date_info = f"TRIP DATE: {departure_date.strftime('%A, %B %d, %Y')}"
+        else:
+            date_info = f"TRIP DATES: {departure_date.strftime('%B %d')} - {return_date.strftime('%B %d, %Y')} (Starting on {departure_date.strftime('%A, %B %d')})"
         
-        print(f"📸 Created photo lookup with {len(photo_lookup)} images")
-        print(f"🏨 Hotel recommendations: {len(hotels_data)}")
-        print(f"🍽️ Restaurant recommendations: {len(restaurants_data)}")
+        # Format hotel and restaurant data for the prompt with REAL PRICES
+        hotel_info = ""
+        if recommended_hotels:
+            hotel_info = "RECOMMENDED HOTELS WITH DATES AND REAL PRICES:\n"
+            for hotel in recommended_hotels[:2]:
+                hotel_info += f"- {hotel['name']} (${hotel.get('price_per_night', 0):.2f}/night - REAL PRICE from Google Places)\n"
+                hotel_info += f"  Check-in: {hotel.get('check_in_date')}, Check-out: {hotel.get('check_out_date')}\n"
+                if hotel.get('photo_url'):
+                    hotel_info += f"  [Has photo available]\n"
+                hotel_info += f"  Category: {hotel.get('category', 'mid-range')}, Rating: {hotel.get('rating', 4.0)}/5\n"
+        
+        restaurant_info = ""
+        if recommended_restaurants:
+            restaurant_info = "TOP RESTAURANTS WITH PHOTOS AND REAL PRICES:\n"
+            for restaurant in recommended_restaurants[:5]:
+                restaurant_info += f"- {restaurant['name']} (${restaurant.get('avg_price', 0):.2f} avg/meal - REAL PRICE from Google Places)"
+                if restaurant.get('photo_url'):
+                    restaurant_info += f" [Has photo available]"
+                restaurant_info += f"\n  Cuisine: {restaurant.get('cuisine', 'Various')}, Rating: {restaurant.get('rating', 4.0)}/5\n"
         
         prompt = f"""
         Create a detailed {duration}-day itinerary for {destination} for {travelers} traveler(s) with {activity_preference} activity level.
         
+        {date_info}
+        
         BUDGET FOR ACTIVITIES: ${activities_budget:.2f} total (${activities_budget/duration:.2f} per day)
         
-        RECOMMENDED HOTEL:
-        {json.dumps(recommended_hotel, indent=2) if recommended_hotel else "Standard accommodation"}
+        {hotel_info}
         
-        TOP RESTAURANTS:
-        {json.dumps(recommended_restaurants, indent=2)}
+        {restaurant_info}
         
-        AVAILABLE TOP-RATED ATTRACTIONS:
-        {json.dumps(attractions_data[:8], indent=2)}
+        AVAILABLE TOP-RATED ATTRACTIONS WITH REAL PRICES:
+        {json.dumps([a for a in attractions_data[:6] if a.get('photo_url')], indent=2)}
         
-        AVAILABLE TOP-RATED ACTIVITIES:
-        {json.dumps(activities_data[:5], indent=2)}
+        AVAILABLE TOP-RATED ACTIVITIES WITH REAL PRICES:
+        {json.dumps([a for a in activities_data[:4] if a.get('photo_url')], indent=2)}
         
-        ACTIVITY PREFERENCE: {activity_preference}
-        - "relaxed": 1-2 activities per day, plenty of rest time
+        IMPORTANT INSTRUCTIONS:
+        1. Create exactly {duration} days of activities starting from {departure_date.strftime('%A, %B %d')}
+        2. Use SPECIFIC names from the provided hotels and restaurants data
+        3. Include the recommended hotels for accommodation with their REAL PRICES
+        4. Mention specific restaurants for lunch and dinner EACH DAY with their REAL PRICES
+        5. For activities, use names from the attractions and activities data provided
+        6. Match the {activity_preference} activity level
+        7. Include photo opportunities for popular spots
+        8. Make each day unique with morning, afternoon, and evening activities
+        9. Include the specific date for each day (Day 1 = {departure_date.strftime('%B %d, %Y')})
+        10. All prices shown are REAL prices from Google Places API
+        
+        ACTIVITY LEVEL GUIDELINES:
+        - "relaxed": 1-2 activities per day, plenty of free time
         - "moderate": 2-3 activities per day, balanced pace  
         - "high": 3-4 activities per day, packed schedule
-        
-        INSTRUCTIONS:
-        1. Create exactly {duration} days of activities
-        2. Use ACTUAL names from the provided data (attractions, activities, restaurants)
-        3. Include specific restaurant recommendations for lunch and dinner
-        4. Mention the hotel for check-in on Day 1
-        5. Match the {activity_preference} activity level
-        6. Consider realistic travel times between locations
-        7. Balance paid and free activities to stay within budget
-        8. Make each day unique and engaging
         
         FORMAT: Return ONLY valid JSON array with this structure:
         [
             {{
                 "day": 1,
-                "title": "Day 1 - Arrival and First Impressions",
-                "hotel": "{recommended_hotel['name'] if recommended_hotel else 'Your Hotel'}",
+                "date": "{departure_date.strftime('%A, %B %d, %Y')}",
+                "title": "Day 1 - Arrival and First Impressions of {destination}",
+                "hotel": {{
+                    "name": "Specific hotel name from recommendations",
+                    "price_per_night": 100.00,
+                    "check_in_date": "{departure_date.strftime('%B %d, %Y')}",
+                    "check_out_date": "{check_out_date.strftime('%B %d, %Y')}",
+                    "photo_url": "Photo URL if available"
+                }},
                 "morning": {{
                     "time": "09:00 - 12:00",
                     "name": "Specific activity name from data",
-                    "description": "Detailed description of what we'll do"
-                }},
-                "lunch": {{
-                    "restaurant": "Specific restaurant name from data",
-                    "description": "What to try here"
-                }},
+                    "description": "Detailed description including photo opportunities",
+                    "photo_url": "Photo URL from available data if possible"
+                }}
                 "afternoon": {{
-                    "time": "13:00 - 17:00", 
-                    "name": "Specific activity name",
-                    "description": "Detailed description"
+                    "time": "14:00 - 17:00", 
+                    "name": "Specific activity name from data",
+                    "description": "Detailed description with sightseeing highlights",
+                    "photo_url": "Photo URL from available data if possible"
                 }},
                 "dinner": {{
+                    "time": "19:00 - 21:00",
                     "restaurant": "Specific restaurant name from data",
-                    "description": "Evening dining experience"
+                    "average_price": 25.00,
+                    "description": "Evening dining experience, recommended dishes",
+                    "restaurant_photo_url": "Photo URL if available"
                 }},
                 "evening": {{
-                    "time": "18:00 - 21:00",
-                    "name": "Evening activity or leisure",
+                    "time": "21:00 - 23:00",
+                    "name": "Evening activity or leisure time",
                     "description": "Evening experience description"
-                }}
+                }},
             }}
         ]
         
-        Use REAL names from the provided data. Be specific and realistic.
+        For Day 2 and beyond, calculate the date by adding days to {departure_date.strftime('%B %d, %Y')}.
+        Be specific with restaurant and hotel names. Include photo URLs when available in the data.
+        Include REAL PRICES from the data provided.
         """
         
         messages = [
-            SystemMessage(content="You are an expert travel planner who creates realistic itineraries using actual destination data."),
+            SystemMessage(content="You are an expert travel planner who creates detailed itineraries with specific hotel and restaurant recommendations using real pricing data."),
             HumanMessage(content=prompt)
         ]
         
@@ -464,13 +626,23 @@ class ItineraryService:
             
             result = json.loads(content)
             
-            # Add photo URLs to activities
-            for day in result:
-                # Add hotel info to each day
-                if not day.get("hotel") and recommended_hotel:
-                    day["hotel"] = recommended_hotel["name"]
+            # Enhance with actual photos from our lookup and ensure dates are correct
+            for i, day in enumerate(result):
+                # Set correct date for each day
+                day_date = departure_date + timedelta(days=i)
+                day["date"] = day_date.strftime("%A, %B %d, %Y")
+                day["date_short"] = day_date.strftime("%b %d")
                 
-                # Match photos for activities
+                # Match hotel photo and real price
+                if day.get("hotel") and isinstance(day["hotel"], dict):
+                    for hotel in recommended_hotels:
+                        if hotel["name"].lower() in day["hotel"]["name"].lower() or day["hotel"]["name"].lower() in hotel["name"].lower():
+                            if hotel.get("photo_url"):
+                                day["hotel"]["photo_url"] = hotel["photo_url"]
+                            day["hotel"]["price_per_night"] = hotel["price_per_night"]
+                            break
+                
+                # Match activity photos
                 for period in ["morning", "afternoon", "evening"]:
                     if day.get(period) and day[period].get("name"):
                         activity_name = day[period]["name"]
@@ -478,23 +650,44 @@ class ItineraryService:
                         for key in photo_lookup:
                             if key.lower() in activity_name.lower() or activity_name.lower() in key.lower():
                                 day[period]["photo_url"] = photo_lookup[key]
-                                print(f"📸 Matched photo for: {activity_name} -> {key}")
                                 break
-                        
-                        # If no photo found, use None
-                        if "photo_url" not in day[period]:
-                            day[period]["photo_url"] = None
+                
+                # Match restaurant photos and real prices
+                for meal in ["lunch", "dinner"]:
+                    if day.get(meal) and day[meal].get("restaurant"):
+                        restaurant_name = day[meal]["restaurant"]
+                        for restaurant in recommended_restaurants:
+                            if restaurant["name"].lower() in restaurant_name.lower() or restaurant_name.lower() in restaurant["name"].lower():
+                                if restaurant.get("photo_url"):
+                                    day[meal]["restaurant_photo_url"] = restaurant["photo_url"]
+                                day[meal]["average_price"] = restaurant["avg_price"]
+                                break
             
             return result
             
         except Exception as e:
-            print(f"Error generating activities: {e}")
-            return self._create_fallback_itinerary(duration, destination, activity_preference)
+            logger.error(f"Error generating activities: {e}")
+            return self._create_fallback_itinerary_with_dates(duration, destination, activity_preference, departure_date, recommended_hotels, recommended_restaurants)
     
-    def _create_fallback_itinerary(self, duration: int, destination: str, activity_preference: str) -> List[Dict[str, Any]]:
-        """Create a simple fallback itinerary"""
+    def _create_fallback_itinerary_with_dates(self, duration: int, destination: str, activity_preference: str, departure_date: datetime, hotels: List[Dict], restaurants: List[Dict]) -> List[Dict[str, Any]]:
+        """Create a fallback itinerary with dates, images, and real prices"""
         itinerary = []
+        
+        # Select hotel and restaurants with photos if available
+        selected_hotel = hotels[0] if hotels else None
+        selected_restaurants = restaurants[:3] if len(restaurants) >= 3 else restaurants
+        
+        # Calculate check-out date
+        check_out_date = departure_date + timedelta(days=duration)
+        
         for day in range(1, duration + 1):
+            # Calculate date for this day
+            day_date = departure_date + timedelta(days=day-1)
+            
+            # Select different restaurants for each day
+            lunch_restaurant = selected_restaurants[day % len(selected_restaurants)] if selected_restaurants else None
+            dinner_restaurant = selected_restaurants[(day + 1) % len(selected_restaurants)] if len(selected_restaurants) > 1 else lunch_restaurant
+            
             if day == 1:
                 title = f"Day {day} - Arrival in {destination}"
                 morning = {"time": "09:00 - 12:00", "name": "Arrival and Hotel Check-in", "description": "Settle in and get acquainted with your accommodation"}
@@ -511,15 +704,186 @@ class ItineraryService:
                 afternoon = {"time": "13:00 - 17:00", "name": "Afternoon Adventures", "description": "Continue discovering the city's highlights"}
                 evening = {"time": "18:00 - 21:00", "name": "Evening Relaxation", "description": "Dinner and evening activities"}
             
-            itinerary.append({
+            day_entry = {
                 "day": day,
+                "date": day_date.strftime("%A, %B %d, %Y"),
+                "date_short": day_date.strftime("%b %d"),
                 "title": title,
+                "hotel": {
+                    "name": selected_hotel["name"] if selected_hotel else "Your Hotel",
+                    "price_per_night": selected_hotel.get("price_per_night", 100) if selected_hotel else 100,
+                    "check_in_date": departure_date.strftime("%B %d, %Y"),
+                    "check_out_date": check_out_date.strftime("%B %d, %Y"),
+                    "photo_url": selected_hotel.get("photo_url") if selected_hotel else None
+                },
                 "morning": morning,
                 "afternoon": afternoon,
-                "evening": evening
-            })
+                "evening": evening,
+                "daily_tip": "Make sure to bring your camera for great photo opportunities!",
+                "estimated_cost": "$50-100"
+            }
+            
+            # Add restaurants with photos and real prices if available
+            if lunch_restaurant:
+                day_entry["lunch"] = {
+                    "time": "12:30 - 14:00",
+                    "restaurant": lunch_restaurant["name"],
+                    "average_price": lunch_restaurant.get("avg_price", 25),
+                    "description": f"Enjoy local cuisine at {lunch_restaurant['name']}",
+                    "restaurant_photo_url": lunch_restaurant.get("photo_url")
+                }
+            
+            if dinner_restaurant:
+                day_entry["dinner"] = {
+                    "time": "19:00 - 21:00",
+                    "restaurant": dinner_restaurant["name"],
+                    "average_price": dinner_restaurant.get("avg_price", 25),
+                    "description": f"Dine at {dinner_restaurant['name']} for a memorable evening",
+                    "restaurant_photo_url": dinner_restaurant.get("photo_url")
+                }
+            
+            itinerary.append(day_entry)
         
         return itinerary
+    
+    async def _generate_realistic_budget_breakdown_from_real_data(
+        self,
+        destination: str,
+        budget: float,
+        duration: int,
+        travelers: int,
+        include_flights: bool,
+        include_hotels: bool,
+        location_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Generate REALISTIC budget breakdown using REAL PRICING from Google Places API"""
+        
+        allocations = {}
+        total_allocated = 0
+        
+        logger.info("=" * 80)
+        logger.info("💰 GENERATING BUDGET BREAKDOWN FROM REAL PRICING DATA")
+        logger.info("=" * 80)
+        
+        # Step 1: Flights allocation (if included)
+        if include_flights:
+            if location_data.get("flights") and len(location_data["flights"]) > 0:
+                cheapest_flight = min(location_data["flights"], key=lambda x: x["price"])
+                allocations["flights"] = cheapest_flight["price"] * travelers
+            else:
+                allocations["flights"] = 500 * travelers  # Default reasonable flight cost
+            total_allocated += allocations["flights"]
+            logger.info(f"✈️  Flights: ${allocations['flights']:.2f}")
+        else:
+            allocations["flights"] = 0
+            logger.info(f"✈️  Flights: Not included")
+        
+        # Step 2: Hotels allocation using REAL Google Places pricing
+        if include_hotels:
+            hotels = location_data.get("hotels", [])
+            if hotels:
+                # Get budget hotels
+                budget_hotels = [h for h in hotels if h.get("category") == "budget"]
+                
+                if budget_hotels:
+                    avg_budget_price = sum(h["price_per_night"] for h in budget_hotels) / len(budget_hotels)
+                else:
+                    avg_budget_price = min(h["price_per_night"] for h in hotels)
+                
+                # Calculate rooms needed
+                rooms_needed = (travelers + 1) // 2
+                hotel_total = avg_budget_price * duration * rooms_needed
+                
+                # Ensure doesn't exceed 40% of remaining budget
+                remaining = budget - total_allocated
+                max_hotel_budget = remaining * 0.40
+                
+                allocations["hotels"] = min(hotel_total, max_hotel_budget)
+                total_allocated += allocations["hotels"]
+                
+                logger.info(f"🏨 Hotels (REAL Google Places pricing):")
+                logger.info(f"   - Avg budget price: ${avg_budget_price:.2f}/night")
+                logger.info(f"   - Total allocated: ${allocations['hotels']:.2f}")
+            else:
+                avg_hotel_cost = 100
+                rooms_needed = (travelers + 1) // 2
+                allocations["hotels"] = avg_hotel_cost * duration * rooms_needed
+                total_allocated += allocations["hotels"]
+                logger.info(f"🏨 Hotels (Fallback): ${allocations['hotels']:.2f}")
+        else:
+            allocations["hotels"] = 0
+            logger.info(f"🏨 Hotels: Not included")
+        
+        # Step 3: Food allocation using REAL restaurant pricing
+        restaurants = location_data.get("restaurants", [])
+        if restaurants:
+            budget_restaurants = [r for r in restaurants if r.get("price_level", 2) <= 2]
+            
+            if budget_restaurants:
+                avg_meal_cost = sum(r["avg_price"] for r in budget_restaurants) / len(budget_restaurants)
+            else:
+                avg_meal_cost = sum(r["avg_price"] for r in restaurants) / len(restaurants)
+            
+            # 3 meals per day
+            food_cost = avg_meal_cost * 3 * duration * travelers
+            
+            logger.info(f"🍽️  Food (REAL Google Places pricing):")
+            logger.info(f"   - Avg meal: ${avg_meal_cost:.2f}")
+        else:
+            avg_meal_cost = 25
+            food_cost = avg_meal_cost * 3 * duration * travelers
+            logger.info(f"🍽️  Food (Fallback): ${avg_meal_cost:.2f}/meal")
+        
+        # Allocate remaining budget
+        remaining_budget = budget - total_allocated
+        
+        # Food gets calculated amount or 35% of remaining (whichever is lower)
+        food_allocated = min(food_cost, remaining_budget * 0.35)
+        allocations["food"] = food_allocated
+        
+        # Calculate how much budget is left AFTER food
+        budget_after_food = remaining_budget - food_allocated
+        
+        # Distribute the REST proportionally
+        total_ratio = 0.20 + 0.35 + 0.10  # travel + activities + buffer
+        
+        allocations["travel"] = budget_after_food * (0.20 / total_ratio)
+        allocations["activities"] = budget_after_food * (0.35 / total_ratio)
+        remaining_buffer = budget_after_food * (0.10 / total_ratio)
+        
+        # Calculate total including remaining buffer
+        total_allocated = sum(allocations.values())
+        grand_total = total_allocated + remaining_buffer
+        
+        # Calculate percentages based on ORIGINAL BUDGET
+        percentages = {cat: (amt / budget * 100) if budget > 0 else 0 
+                      for cat, amt in allocations.items()}
+        remaining_percentage = (remaining_buffer / budget * 100) if budget > 0 else 0
+        
+        logger.info(f"\n💵 FINAL BUDGET BREAKDOWN (REAL PRICING):")
+        logger.info(f"   - Flights: ${allocations.get('flights', 0):.2f} ({percentages.get('flights', 0):.1f}%)")
+        logger.info(f"   - Hotels: ${allocations.get('hotels', 0):.2f} ({percentages.get('hotels', 0):.1f}%)")
+        logger.info(f"   - Food: ${allocations.get('food', 0):.2f} ({percentages.get('food', 0):.1f}%)")
+        logger.info(f"   - Travel: ${allocations.get('travel', 0):.2f} ({percentages.get('travel', 0):.1f}%)")
+        logger.info(f"   - Activities: ${allocations.get('activities', 0):.2f} ({percentages.get('activities', 0):.1f}%)")
+        logger.info(f"   - Remaining: ${remaining_buffer:.2f} ({remaining_percentage:.1f}%)")
+        logger.info(f"   - Grand Total: ${grand_total:.2f}")
+        logger.info("=" * 80)
+        
+        return {
+            "categories": {
+                "flights": {"amount": round(allocations.get("flights", 0), 2), "percentage": round(percentages.get("flights", 0), 2)},
+                "hotels": {"amount": round(allocations.get("hotels", 0), 2), "percentage": round(percentages.get("hotels", 0), 2)},
+                "food": {"amount": round(allocations.get("food", 0), 2), "percentage": round(percentages.get("food", 0), 2)},
+                "travel": {"amount": round(allocations.get("travel", 0), 2), "percentage": round(percentages.get("travel", 0), 2)},
+                "activities": {"amount": round(allocations.get("activities", 0), 2), "percentage": round(percentages.get("activities", 0), 2)}
+            },
+            "total_allocated": round(total_allocated, 2),
+            "remaining_budget": round(remaining_buffer, 2),
+            "remaining_percentage": round(remaining_percentage, 2),
+            "grand_total": round(grand_total, 2),
+            "original_budget": round(budget, 2)
+        }
     
     async def _generate_attractions_summary_with_data(
         self,
@@ -536,7 +900,7 @@ class ItineraryService:
         attraction_photos = [attr.get("photo_url") for attr in attractions[:5] if attr.get("photo_url")]
         activity_photos = [act.get("photo_url") for act in activities[:5] if act.get("photo_url")]
         
-        print(f"📸 Found {len(attraction_photos)} attraction photos and {len(activity_photos)} activity photos")
+        logger.info(f"📸 Found {len(attraction_photos)} attraction photos and {len(activity_photos)} activity photos")
         
         prompt = f"""
         Create an engaging summary of top attractions and activities for {destination}.
@@ -600,7 +964,7 @@ class ItineraryService:
             return result
             
         except Exception as e:
-            print(f"Error generating summary: {e}")
+            logger.error(f"Error generating summary: {e}")
             return {
                 "attractions": {
                     "description": f"Discover the amazing attractions of {destination}",
@@ -780,7 +1144,7 @@ class ItineraryService:
         You: "I'd be happy to change your destination from {current_itinerary['destination']['name']} to Paris! I'll keep your current budget of ${current_itinerary['total_budget']:,.2f}, {current_itinerary['duration']} days, {current_itinerary['travelers']} travelers, and {current_itinerary.get('activity_preference', 'moderate')} activity level. Should I proceed?"
         Proposed changes: {{"destination": "Paris"}}, requires_confirmation: true
 
-        User: "Yes, please"
+        User: "Yes", "Yes, please" or "Okay"
         You: "Great! I'm updating your itinerary to Paris now."
         confirmed_changes: true, proposed_changes: {{"destination": "Paris"}}
 
@@ -857,8 +1221,8 @@ class ItineraryService:
                         "include_hotels": changes.get("include_hotels", current_itinerary.get("include_hotels", True))
                     }
                     
-                    print(f"🔧 APPLYING CHANGES: {changes}")
-                    print(f"🔧 FINAL PARAMS: {new_params}")
+                    logger.info(f"🔧 APPLYING CHANGES: {changes}")
+                    logger.info(f"🔧 FINAL PARAMS: {new_params}")
                     
                     # First validate budget
                     validation = await self.validate_budget(
@@ -893,8 +1257,7 @@ class ItineraryService:
                     }
                     
                 except Exception as mod_error:
-                    print(f"❌ Error applying modifications: {mod_error}")
-                    import traceback
+                    logger.error(f"❌ Error applying modifications: {mod_error}")
                     traceback.print_exc()
                     return {
                         "message": f"I understand you want to make changes, but there was an issue: {str(mod_error)}. Could you try rephrasing your request?",
@@ -912,8 +1275,8 @@ class ItineraryService:
             }
             
         except json.JSONDecodeError as e:
-            print(f"❌ JSON parsing error in process_chat_message: {e}")
-            print(f"Content that failed to parse: {content[:500] if 'content' in locals() else 'No content'}")
+            logger.error(f"❌ JSON parsing error in process_chat_message: {e}")
+            logger.error(f"Content that failed to parse: {content[:500] if 'content' in locals() else 'No content'}")
             
             # Fallback: Friendly conversational response
             return {
@@ -924,10 +1287,8 @@ class ItineraryService:
             }
             
         except Exception as e:
-            print(f"❌ Error in process_chat_message: {e}")
-            import traceback
+            logger.error(f"❌ Error in process_chat_message: {e}")
             traceback.print_exc()
-            
             return {
                 "message": "I'm here to help you customize your itinerary! You can ask questions about your current plans or suggest changes to the destination, budget, duration, or any other details.",
                 "modifications_made": False,

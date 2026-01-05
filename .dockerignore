@@ -9,3 +9,4 @@ venv/
 uploads/
 videos/
 video_db.sqlite
+video_sessions.db

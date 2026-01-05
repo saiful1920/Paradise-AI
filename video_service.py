@@ -1,12 +1,13 @@
 """
 Video Generation Service using KIE AI API (Google Veo 3.1)
 
-ACTIVITY-MATCHED TRAVEL VIDEO WITH TIMELINE GUIDANCE:
-- Videos directly reflect the ACTUAL activities from each day's itinerary
-- The SAME PERSON from the uploaded photo appears doing those specific activities
-- INTELLIGENT TIME ALLOCATION: LLM decides how many seconds each activity gets
-- TRAVEL VLOG STYLE: Exciting, fun, energetic short-form content
-- Morning/Afternoon/Evening activities visualized with proper pacing
+CINEMATIC TRAVEL VIDEO WITH INTELLIGENT TIMELINE:
+- Videos show the traveler from uploaded photo doing actual itinerary activities
+- Cinematic quality with smooth transitions and natural lighting
+- Intelligent time allocation based on activity visual appeal
+- Morning/Afternoon/Evening flow with appropriate moods
+- Temporary file storage with automatic cleanup
+- Maximum 7 days of video generation
 """
 
 import os
@@ -14,31 +15,65 @@ import time
 import requests
 import logging
 import json
+import tempfile
+import shutil
+import atexit
+import uuid
 from typing import Dict, List, Optional, Any, Callable
-from langchain_openai import ChatOpenAI
-from langchain.schema import SystemMessage, HumanMessage
+from moviepy.editor import VideoFileClip, concatenate_videoclips
 
 logger = logging.getLogger(__name__)
 
+# Maximum days for video generation
+MAX_VIDEO_DAYS = 7
+
+# Temporary directory for session files
+TEMP_VIDEO_DIR = tempfile.mkdtemp(prefix="travel_videos_")
+TEMP_UPLOAD_DIR = tempfile.mkdtemp(prefix="travel_uploads_")
+
+
+def cleanup_temp_directories():
+    """Cleanup temporary directories on exit."""
+    for temp_dir in [TEMP_VIDEO_DIR, TEMP_UPLOAD_DIR]:
+        try:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+                logger.info(f"🧹 Cleaned up temp directory: {temp_dir}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to cleanup {temp_dir}: {e}")
+
+
+# Register cleanup on program exit
+atexit.register(cleanup_temp_directories)
+
 
 class VideoGenerationService:
-    """Service for generating travel videos that match the actual itinerary activities"""
+    """Service for generating cinematic travel videos matching actual itinerary activities"""
     
-    def __init__(self, api_key: Optional[str] = None, openai_api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("KIE_AI_API_KEY")
-        self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key
         self.base_url = "https://api.kie.ai/api/v1/veo"
         self.upload_base_url = "https://kieai.redpandaai.co"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
-        
-        self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0.7,
-            openai_api_key=self.openai_api_key
-        )
+        self.temp_files: List[str] = []  # Track temp files for this instance
+    
+    def _track_temp_file(self, filepath: str):
+        """Track a temporary file for cleanup."""
+        self.temp_files.append(filepath)
+    
+    def cleanup_session_files(self):
+        """Cleanup all temporary files created in this session."""
+        for filepath in self.temp_files:
+            try:
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+                    logger.info(f"🧹 Removed temp file: {filepath}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to remove {filepath}: {e}")
+        self.temp_files.clear()
     
     def upload_file_to_kie(self, local_file_path: str) -> Optional[str]:
         """Upload a local file to KIE AI and get a public URL."""
@@ -93,252 +128,124 @@ class VideoGenerationService:
         destination: str
     ) -> str:
         """
-        Generate video prompt with INTELLIGENT TIMELINE GUIDANCE.
+        Generate prompt in exact format: 
+        "Create a cinematic 8-second travel video... throughout.
+        0-Xs | Time – Place (Mood) Description"
         
-        The LLM will:
-        1. Analyze each activity's visual appeal and importance
-        2. Allocate seconds (total = 8 seconds) based on activity weight
-        3. Create an exciting travel vlog style narrative
-        4. Include timing markers for video generation
+        Focuses on enjoyable moments and tour clip feel.
         """
         
-        # Extract ACTUAL activities from the itinerary
+        # Extract ACTUAL activities
+        day_title = day_activities.get("title", f"Day {day_num} in {destination}")
+        day_text = f"Day {day_num} – {day_title}"
         morning = day_activities.get("morning", {})
         afternoon = day_activities.get("afternoon", {})
         evening = day_activities.get("evening", {})
         
-        morning_name = morning.get("name", "")
-        morning_desc = morning.get("description", "")
-        afternoon_name = afternoon.get("name", "")
-        afternoon_desc = afternoon.get("description", "")
-        evening_name = evening.get("name", "")
-        evening_desc = evening.get("description", "")
-        
-        # Log the actual activities
-        logger.info(f"📋 Day {day_num} ACTUAL Activities:")
-        logger.info(f"   Morning: {morning_name}")
-        logger.info(f"   Afternoon: {afternoon_name}")
-        logger.info(f"   Evening: {evening_name}")
-        
-        prompt = f"""
-        Create an 8-SECOND travel vlog video prompt for Day {day_num}.
-        
-        🎬 VIDEO STYLE: Exciting, energetic TRAVEL VLOG like popular YouTube/TikTok travel content
-        - Fast-paced, dynamic shots
-        - Person genuinely enjoying and having FUN
-        - Emotional moments: wonder, excitement, joy, awe
-        - Movement and energy throughout
-        
-        ⏱️ CRITICAL: TIMELINE ALLOCATION (MUST TOTAL 8 SECONDS)
-        
-        Analyze each activity and decide how many seconds it deserves based on:
-        - Visual appeal (beaches, sunsets, nature = MORE time)
-        - Action intensity (adventure sports, swimming = MORE time)
-        - Emotional impact (spiritual places, viewpoints = MORE time)
-        - Routine activities (transfers, check-in = LESS time)
-        - Meal activities (quick bites = 1-1.5s, fancy dinner = 2s)
-        
-        TIMING EXAMPLES:
-        - Epic beach/waterfall/sunset: 2.5-3.5 seconds
-        - Adventure activity (hiking, snorkeling): 2.5-3 seconds
-        - Cultural experience (temple, show): 2-2.5 seconds
-        - Food/dining experience: 1.5-2 seconds
-        - Casual activity (shopping, coffee): 1-1.5 seconds
-        - Transit/check-in: 0.5-1 second
-        
-        📅 DAY {day_num} OF {total_days} - ACTIVITIES TO VISUALIZE:
-        
-        🌅 MORNING:
-        - Activity: {morning_name}
-        - Details: {morning_desc}
-        
-        ☀️ AFTERNOON:
-        - Activity: {afternoon_name}
-        - Details: {afternoon_desc}
-        
-        🌙 EVENING:
-        - Activity: {evening_name}
-        - Details: {evening_desc}
-        
-        🎬 CREATE THE PROMPT WITH THIS EXACT FORMAT:
-        
-        "[0:00-X:XX] [MORNING SCENE with exciting action and emotion]. 
-        [X:XX-Y:YY] [AFTERNOON SCENE with dynamic movement and joy]. 
-        [Y:YY-8:00] [EVENING SCENE with satisfying conclusion]. 
-        The same person from the reference photo throughout, travel vlog style with energetic pacing, 
-        cinematic transitions, genuine reactions of wonder and excitement, warm vibrant colors."
-        
-        🎥 VLOG-STYLE VISUAL DESCRIPTIONS - Make it EXCITING:
-        
-        Instead of: "person at beach"
-        Write: "person running excitedly into crystal-clear turquoise waves, splashing water, 
-        laughing with pure joy, spinning around with arms wide open"
-        
-        Instead of: "person at temple"  
-        Write: "person's eyes widening in awe at ancient golden architecture, slowly walking 
-        through ornate corridors, touching ancient stone walls with wonder, peaceful smile"
-        
-        Instead of: "person eating food"
-        Write: "person's delighted reaction tasting street food, eyes closing in pleasure, 
-        giving enthusiastic thumbs up, steam rising from delicious dishes"
-        
-        Instead of: "person watching sunset"
-        Write: "person silhouetted against blazing orange sky, arms raised in triumph, 
-        turning to camera with biggest smile, golden light painting their face"
-        
-        🔥 ENERGY & EMOTION KEYWORDS TO INCLUDE:
-        - Actions: running, jumping, spinning, dancing, diving, climbing, exploring
-        - Reactions: laughing, gasping, smiling widely, eyes sparkling, pure joy
-        - Camera: following, sweeping, revealing, tracking, dynamic angles
-        - Mood: excitement, wonder, freedom, adventure, bliss, awe
-        
-        ⚠️ RULES:
-        1. Times MUST add up to exactly 8 seconds
-        2. Same person from reference photo in ALL scenes
-        3. NO location names - only visual descriptions
-        4. Make it feel like an actual exciting travel vlog
-        5. Include emotional reactions and genuine enjoyment
-        6. Dynamic camera movement descriptions
-        
-        Generate the prompt now. Return ONLY the prompt text with timeline markers.
+        morning_name = morning.get("name", "Morning location")
+        morning_desc = morning.get("description", "exploring quietly")
+        afternoon_name = afternoon.get("name", "Afternoon location")
+        afternoon_desc = afternoon.get("description", "discovering things")
+        evening_name = evening.get("name", "Evening location")
+        evening_desc = evening.get("description", "enjoying the atmosphere")
+
+        prompt = f"""Create an 8-second cinematic travel reel–style vlog video.
+
+        ABSOLUTE TIMING RULE (NON-NEGOTIABLE):
+        - The video must follow the time ranges EXACTLY as written.
+        - Do NOT shift, compress, extend, or overlap any segment.
+        - Do NOT skip any segment.
+  
+        TRAVELER IDENTITY (STRICT – SINGLE OR MULTIPLE PEOPLE):
+        - Use ALL people visible in the reference image as the ONLY travelers.
+        - If the reference image contains multiple people, ALL of them must appear together throughout the video.
+        - Do NOT add, remove, merge, duplicate, or replace any person.
+        - Maintain exact identity consistency for EACH person individually:
+        - same facial structure, skin tone, hairstyle, hair color
+        - same body shape, height, and proportions
+        - same gender, ethnicity, and age group
+        - Clothing must remain realistic and consistent for each person.
+        - No beautification, no stylization, no face reshaping.
+        - No age changes, no smoothing, no artificial enhancements.
+        - Natural human motion only.
+        - No exaggerated expressions or forced emotions.
+
+        GROUP BEHAVIOR RULES:
+        - The travelers behave as a natural group (friends, family, or companions).
+        - Group spacing and interaction must feel realistic and relaxed.
+        - No posing for camera, no influencer-style gestures.
+        - No one person should disappear or dominate scenes unnaturally.
+        - All travelers must remain visible when contextually reasonable.
+
+        IMPORTANT (Veo 3 Guidance):
+        - Automatically select activities based on the visible environment and location type
+        - Activities must feel LOCATION-AWARE and CONTEXT-DRIVEN
+        - Avoid repetitive walking or running-focused actions
+        - No jogging, no rushing, no staged poses
+        - Actions should feel naturally motivated by surroundings
+        - Activities must be safe, realistic, and culturally appropriate
+        - No extreme actions, no adult or sensitive content
+
+        Overall Style:
+        Cinematic short travel reel, realistic, immersive, and naturally fun.
+        Smooth transitions, stable camera, high-quality natural lighting.
+        Authentic exploration, subtle enjoyment, and quiet discovery.
+        Scene pacing should match upbeat but relaxed travel music.
+        Clean cuts with a loop-friendly ending.
+
+        The video should show SAFE, FAMILY-FRIENDLY, and LOCATION-APPROPRIATE activities only.
+
+        0–0.8s | Day Intro Shot (Cinematic Title)
+        A short establishing shot of the location.
+        On-screen text: "{day_text}"
+        The text needs to be clearly visible but not obstructive and need to the same text as {day_text}.
+        Do NOT paraphrase, translate, stylize, or animate the text.
+        The travelers may appear briefly in frame or as a natural silhouette.
+        Camera: slow cinematic reveal (push-in, pull-back, or wide aerial-style angle).
+        Mood: curiosity, anticipation, calm excitement.
+
+        0.8–3s | Morning – {morning_name} (Observational & Immersive)
+        The SAME group of travelers {morning_desc}, engaging with the environment in a location-aware way:
+        - observing architecture, landscapes, or cultural details
+        - pausing to admire views, signage, or surroundings
+        - touching textures (walls, railings, leaves)
+        - interacting lightly with textures (railings, stone, plants, displays)
+        - standing, leaning, or slowly shifting position rather than continuous walking
+        Expression: neutral, focused, naturally curious (no forced smiles).
+        Lighting: soft natural morning light.
+        Camera: stabilized medium or wide shot with gentle motion.
+
+        3–6.8s | Afternoon – {afternoon_name} (Fun & Active Exploration)
+        The SAME group of travelers {afternoon_desc}, doing activities motivated by the location, such as:
+        - Physical activities dependent on location (hiking, biking, water sports, etc.)
+        - Exploring landmarks, trying activities, moving between places
+        - Experiencing local attractions (museums, parks, viewpoints)
+        - light, non-repetitive movement (no running or constant walking loops)
+        Expression: focused excitement, visible enjoyment (no forced smiles).
+        Lighting: bright daylight with clear details and vibrant tones.
+        Camera: dynamic follow shot, side pan, or smooth cinematic cut.
+
+        6.8–8s | Evening – {evening_name} (Atmospheric & Reflective)
+        The SAME group of travelers {evening_desc}, engaging in evening activities that naturally
+        fit the location:
+        - enjoying local food (non-alcoholic, family-friendly), cafes, or markets
+        - engaging with local culture (music, art, performances)
+        - participating in community events or gatherings
+        - sitting at a cozy cafe or restaurant
+        - standing or slowly moving through softly lit streets or viewpoints
+        - relaxing at scenic spots
+        - Park visits
+        - observing city lights, sunset, or night scenery
+        - relaxed, grounded body language
+        Expression: content, reflective, quietly happy.
+        Lighting: golden hour or cinematic night ambience.
+        Camera: smooth, stable motion ending on a still, loopable frame.
+
+        End with a steady cinematic frame suitable for a seamless viral travel reel loop.
         """
-        
-        messages = [
-            SystemMessage(content="""You are a travel vlog director creating short-form viral travel content.
-            Your prompts create EXCITING, ENERGETIC videos that make viewers want to book trips immediately.
-            
-            You excel at:
-            - Intelligent time allocation based on activity visual appeal
-            - Creating dynamic, fast-paced travel vlog narratives
-            - Capturing genuine emotions: joy, wonder, excitement, awe
-            - Writing prompts that result in scroll-stopping content
-            
-            Your videos feel like the best travel TikToks/Reels - full of energy, authentic moments, 
-            and that "I NEED to go there" feeling.
-            
-            CRITICAL: Always include exact timeline markers [X:XX-Y:YY] that total 8 seconds.
-            Allocate more time to visually stunning/exciting activities."""),
-            HumanMessage(content=prompt)
-        ]
-        
-        try:
-            response = await self.llm.ainvoke(messages)
-            matched_prompt = response.content.strip()
-            
-            # Clean quotes
-            if matched_prompt.startswith('"') and matched_prompt.endswith('"'):
-                matched_prompt = matched_prompt[1:-1]
-            if matched_prompt.startswith("'") and matched_prompt.endswith("'"):
-                matched_prompt = matched_prompt[1:-1]
-            
-            # Ensure it references the person
-            if "person from the reference" not in matched_prompt.lower() and "reference photo" not in matched_prompt.lower():
-                matched_prompt = "The person from the reference photo: " + matched_prompt
-            
-            logger.info(f"🎬 Generated TIMELINE-GUIDED vlog prompt for Day {day_num}")
-            logger.info(f"📝 Prompt: {matched_prompt[:400]}...")
-            
-            return matched_prompt
-            
-        except Exception as e:
-            logger.error(f"❌ Error generating prompt: {e}")
-            return self._create_fallback_matched_prompt(day_num, day_activities)
+
+        return prompt
     
-    def _create_fallback_matched_prompt(self, day_num: int, day_activities: Dict[str, Any]) -> str:
-        """Create fallback prompt with timeline based on actual activities"""
-        
-        morning = day_activities.get("morning", {}).get("name", "morning exploration")
-        afternoon = day_activities.get("afternoon", {}).get("name", "afternoon adventure")
-        evening = day_activities.get("evening", {}).get("name", "evening relaxation")
-        
-        def get_activity_weight(activity_name: str) -> float:
-            """Determine time weight based on activity type"""
-            activity_lower = activity_name.lower()
-            
-            # High visual impact activities (3+ seconds)
-            if any(word in activity_lower for word in ["beach", "waterfall", "sunset", "sunrise", "snorkel", "diving", "hike", "trek"]):
-                return 3.0
-            # Medium-high impact (2.5 seconds)
-            elif any(word in activity_lower for word in ["temple", "rice terrace", "mountain", "lake", "boat", "cruise", "cultural show"]):
-                return 2.5
-            # Medium impact (2 seconds)
-            elif any(word in activity_lower for word in ["spa", "massage", "dinner", "restaurant", "market", "shopping", "museum"]):
-                return 2.0
-            # Lower impact (1.5 seconds)
-            elif any(word in activity_lower for word in ["coffee", "cafe", "breakfast", "lunch", "walk", "stroll"]):
-                return 1.5
-            # Minimal (1 second)
-            elif any(word in activity_lower for word in ["arrival", "check-in", "departure", "transfer", "airport"]):
-                return 1.0
-            else:
-                return 2.0
-        
-        # Calculate weights
-        morning_weight = get_activity_weight(morning)
-        afternoon_weight = get_activity_weight(afternoon)
-        evening_weight = get_activity_weight(evening)
-        
-        # Normalize to 8 seconds
-        total_weight = morning_weight + afternoon_weight + evening_weight
-        morning_time = round((morning_weight / total_weight) * 8, 1)
-        afternoon_time = round((afternoon_weight / total_weight) * 8, 1)
-        evening_time = round(8 - morning_time - afternoon_time, 1)
-        
-        # Calculate timestamps
-        morning_end = morning_time
-        afternoon_end = morning_time + afternoon_time
-        
-        def activity_to_vlog_visual(activity_name: str) -> str:
-            """Convert activity to exciting vlog-style visual"""
-            activity_lower = activity_name.lower()
-            
-            if any(word in activity_lower for word in ["beach", "swimming", "swim"]):
-                return "running excitedly into crystal-clear turquoise waves, splashing joyfully, diving under water, emerging with a huge smile, spinning around with arms wide open feeling total freedom"
-            elif any(word in activity_lower for word in ["temple", "church", "mosque", "shrine"]):
-                return "walking slowly through magnificent ancient architecture, eyes widening in complete awe, gently touching ornate golden carvings, peaceful smile of spiritual wonder"
-            elif any(word in activity_lower for word in ["hike", "trek", "hiking", "trekking"]):
-                return "conquering scenic mountain trails with determination, reaching a viewpoint and throwing arms up in triumph, spinning to take in the breathtaking panorama, genuine exhilaration on their face"
-            elif any(word in activity_lower for word in ["rice", "terrace", "farm"]):
-                return "walking through stunning emerald green terraced fields, running fingers through rice stalks, stopping to photograph the incredible layered landscape with pure joy"
-            elif any(word in activity_lower for word in ["snorkel", "diving", "dive", "underwater"]):
-                return "plunging into crystal waters, swimming alongside colorful tropical fish, pointing excitedly at marine life, underwater twirls of pure happiness"
-            elif any(word in activity_lower for word in ["waterfall", "falls"]):
-                return "approaching a thundering majestic waterfall, getting splashed by cool mist, laughing with delight, standing with arms outstretched feeling the power of nature"
-            elif any(word in activity_lower for word in ["food", "eat", "cuisine", "street food", "taste"]):
-                return "eagerly trying sizzling street food, eyes closing in delicious pleasure, giving enthusiastic approval, steam rising from mouthwatering dishes"
-            elif any(word in activity_lower for word in ["sunset", "sunrise"]):
-                return "silhouetted against a blazing orange and pink sky, arms raised in triumph, spinning to face the camera with the biggest smile, golden light painting their happy face"
-            elif any(word in activity_lower for word in ["spa", "massage", "relax"]):
-                return "melting into pure relaxation during a traditional spa treatment, expression of complete bliss, emerging refreshed and glowing"
-            elif any(word in activity_lower for word in ["shop", "market", "bazaar"]):
-                return "excitedly exploring colorful vibrant market stalls, trying on fun items, haggling with big smiles, holding up unique treasures with delight"
-            elif any(word in activity_lower for word in ["show", "dance", "performance", "cultural"]):
-                return "watching mesmerizing traditional performance with sparkling eyes, clapping along enthusiastically, completely captivated by the artistry"
-            elif any(word in activity_lower for word in ["boat", "cruise", "sailing"]):
-                return "standing at the bow of a boat with wind in their hair, arms spread wide like flying, huge smile watching stunning scenery glide past"
-            elif any(word in activity_lower for word in ["dinner", "restaurant", "dining"]):
-                return "savoring an elegant dinner in beautiful ambiance, clinking glasses joyfully, tasting exquisite dishes with expressions of pure delight"
-            elif any(word in activity_lower for word in ["night market", "night"]):
-                return "excitedly exploring glowing neon-lit night market stalls, trying unusual street foods, dancing slightly to live music, infectious evening energy"
-            elif any(word in activity_lower for word in ["coffee", "cafe", "breakfast"]):
-                return "savoring the first sip of perfect local coffee, satisfied smile, soaking in the morning atmosphere with contentment"
-            elif any(word in activity_lower for word in ["arrival", "check-in", "hotel"]):
-                return "arriving with excited anticipation, first glimpse of new surroundings, spontaneous happy dance at the start of adventure"
-            elif any(word in activity_lower for word in ["departure", "leaving", "airport"]):
-                return "taking one last loving look around, hand on heart with gratitude, bittersweet smile of incredible memories made"
-            else:
-                return f"enthusiastically enjoying {activity_name}, genuine smile of pure travel happiness, soaking in every moment"
-        
-        morning_visual = activity_to_vlog_visual(morning)
-        afternoon_visual = activity_to_vlog_visual(afternoon)
-        evening_visual = activity_to_vlog_visual(evening)
-        
-        return f"""[0:00-{morning_end:.1f}s] The person from the reference photo {morning_visual}. 
-        [{morning_end:.1f}s-{afternoon_end:.1f}s] Then they are {afternoon_visual}. 
-        [{afternoon_end:.1f}s-8:00] The day ends with them {evening_visual}. 
-        Travel vlog style, the same person throughout all scenes, energetic dynamic camera movements, 
-        cinematic transitions between activities, genuine emotional reactions, warm vibrant color grading, 
-        excitement and joy radiating from every moment."""
     
     async def generate_full_itinerary_video(
         self,
@@ -346,27 +253,50 @@ class VideoGenerationService:
         destination: str,
         duration: int,
         daily_activities: List[Dict[str, Any]],
-        model: str = "veo3",
-        progress_callback: Optional[Callable] = None,
         video_id: Optional[str] = None,
+        model: str = "veo3_fast",
+        progress_callback: Optional[Callable] = None,
         video_db: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
-        Generate travel vlog videos that MATCH the actual itinerary activities.
+        Generate cinematic travel videos matching actual itinerary activities.
         
-        Each day's 8-second video shows the person from the photo doing:
-        - The actual morning activity (time allocated by importance)
-        - The actual afternoon activity (time allocated by importance)
-        - The actual evening activity (time allocated by importance)
+        Each day's 8-second video shows the person from the photo:
+        - At the actual morning location with appropriate mood
+        - Exploring the actual afternoon activity
+        - Enjoying the actual evening experience
         
-        Style: Exciting travel vlog with genuine emotions and dynamic pacing
+        Style: Cinematic travel documentary with authentic emotional moments
+        
+        Args:
+            user_image_url: URL or path to user's reference photo
+            destination: Travel destination name
+            duration: Number of days (max 7)
+            daily_activities: List of day activities
+            video_id: Unique identifier for this video generation
+            model: AI model to use
+            progress_callback: Optional callback for progress updates
+            video_db: Optional database interface
+            
+        Returns:
+            Dict with success status, video URL, and metadata
         """
         
+        # Enforce maximum days limit
+        if duration > MAX_VIDEO_DAYS:
+            logger.warning(f"⚠️ Duration {duration} exceeds max {MAX_VIDEO_DAYS}. Limiting to {MAX_VIDEO_DAYS} days.")
+            duration = MAX_VIDEO_DAYS
+        
+        # Generate video_id if not provided
+        if not video_id:
+            video_id = str(uuid.uuid4())[:8]
+        
         logger.info("="*80)
-        logger.info("🎥 GENERATING TRAVEL VLOG VIDEO WITH TIMELINE GUIDANCE")
+        logger.info("🎥 GENERATING CINEMATIC TRAVEL VIDEO")
         logger.info(f"📍 Destination: {destination}")
-        logger.info(f"📅 Duration: {duration} days")
-        logger.info(f"🎬 Style: Exciting travel vlog with smart time allocation")
+        logger.info(f"📅 Duration: {duration} days (max {MAX_VIDEO_DAYS})")
+        logger.info(f"🆔 Video ID: {video_id}")
+        logger.info(f"🎬 Style: Cinematic with intelligent time allocation")
         logger.info("="*80)
         
         # Upload user photo if localhost
@@ -378,6 +308,8 @@ class VideoGenerationService:
             public_url = self.upload_file_to_kie(local_path)
             if public_url:
                 user_image_url = public_url
+                # Track the local file for cleanup
+                self._track_temp_file(local_path)
             else:
                 return {"success": False, "error": "Failed to upload user photo"}
         
@@ -385,7 +317,7 @@ class VideoGenerationService:
         
         for day_num in range(1, duration + 1):
             logger.info("="*60)
-            logger.info(f"🎬 DAY {day_num} - Creating vlog video with timeline guidance")
+            logger.info(f"🎬 DAY {day_num} - Creating cinematic travel video")
             logger.info("="*60)
             
             if progress_callback:
@@ -393,7 +325,7 @@ class VideoGenerationService:
                     "current_day": day_num,
                     "total_days": duration,
                     "progress": int((day_num - 1) / duration * 90),
-                    "current_stage": f"🎬 Creating Day {day_num} travel vlog...",
+                    "current_stage": f"🎬 Creating Day {day_num} cinematic video...",
                     "completed_days": day_num - 1
                 })
             
@@ -402,12 +334,12 @@ class VideoGenerationService:
             day_activities_data = daily_activities[day_idx] if day_idx < len(daily_activities) else {}
             
             # Log what activities we're visualizing
-            logger.info(f"📋 Activities to visualize with smart timing:")
+            logger.info(f"📋 Activities to visualize cinematically:")
             logger.info(f"   🌅 Morning: {day_activities_data.get('morning', {}).get('name', 'N/A')}")
             logger.info(f"   ☀️ Afternoon: {day_activities_data.get('afternoon', {}).get('name', 'N/A')}")
             logger.info(f"   🌙 Evening: {day_activities_data.get('evening', {}).get('name', 'N/A')}")
             
-            # Generate prompt with timeline guidance
+            # Generate cinematic prompt
             try:
                 matched_prompt = await self.generate_activity_matched_prompt(
                     day_num=day_num,
@@ -417,9 +349,8 @@ class VideoGenerationService:
                 )
             except Exception as e:
                 logger.error(f"❌ Error generating prompt: {e}")
-                matched_prompt = self._create_fallback_matched_prompt(day_num, day_activities_data)
             
-            logger.info(f"📝 Timeline-Guided Vlog Prompt: {matched_prompt[:400]}...")
+            logger.info(f"📝 Cinematic Prompt: {matched_prompt[:500]}...")
             
             # Save to database
             if video_db and video_id:
@@ -452,7 +383,7 @@ class VideoGenerationService:
                 continue
             
             task_id = result["task_id"]
-            logger.info(f"⏳ Rendering Day {day_num} vlog...")
+            logger.info(f"⏳ Rendering Day {day_num} cinematic video...")
             
             if video_db and video_id:
                 video_db.save_day_video(
@@ -480,12 +411,14 @@ class VideoGenerationService:
                 logger.error(f"❌ No video URL for Day {day_num}")
                 continue
             
-            output_filename = f"day_{day_num}_{destination.replace(' ', '_')}.mp4"
-            output_path = f"/tmp/{output_filename}"
+            # Save day video to temp directory
+            output_filename = f"day_{day_num}_{destination.replace(' ', '_')}_{video_id}.mp4"
+            output_path = os.path.join(TEMP_VIDEO_DIR, output_filename)
             
             if self.download_video(video_url, output_path):
                 day_video_paths.append(output_path)
-                logger.info(f"✅ Day {day_num} vlog video ready!")
+                self._track_temp_file(output_path)  # Track for cleanup
+                logger.info(f"✅ Day {day_num} cinematic video ready!")
                 if video_db and video_id:
                     video_db.save_day_video(
                         video_id=video_id,
@@ -500,7 +433,7 @@ class VideoGenerationService:
             return {"success": False, "error": "No day videos generated"}
         
         logger.info("="*60)
-        logger.info(f"🎬 Merging {len(day_video_paths)} day vlogs into final video...")
+        logger.info(f"🎬 Merging {len(day_video_paths)} day videos into final cinematic piece...")
         logger.info("="*60)
         
         if progress_callback:
@@ -508,47 +441,61 @@ class VideoGenerationService:
                 "current_day": duration,
                 "total_days": duration,
                 "progress": 92,
-                "current_stage": "🎞️ Creating your complete travel vlog...",
+                "current_stage": "🎞️ Creating your complete travel film...",
                 "completed_days": duration
             })
         
-        final_video_path = f"videos/{destination.replace(' ', '_')}_trip.mp4"
+        # Create videos directory if it doesn't exist
+        videos_dir = "videos"
+        os.makedirs(videos_dir, exist_ok=True)
+        
+        # Final video naming: destination_videoid.mp4
+        sanitized_destination = destination.replace(' ', '_').replace('/', '_').replace('\\', '_')
+        final_video_filename = f"{sanitized_destination}_{video_id}.mp4"
+        final_video_path = os.path.join(videos_dir, final_video_filename)
+        
         merge_success = self._merge_videos(day_video_paths, final_video_path)
         
-        # Cleanup
+        # Cleanup day videos (they're temporary)
         for temp_path in day_video_paths:
             try:
-                os.remove(temp_path)
-            except:
-                pass
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                    logger.info(f"🧹 Cleaned up temp day video: {temp_path}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to cleanup {temp_path}: {e}")
         
         if not merge_success:
             return {"success": False, "error": "Failed to merge videos"}
         
-        logger.info("="*80)
-        logger.info(f"🎉 YOUR TRAVEL VLOG IS COMPLETE!")
-        logger.info(f"📁 Path: {final_video_path}")
-        logger.info(f"📅 {len(day_video_paths)} days of exciting travel content")
-        logger.info("="*80)
+        # Track final video for session cleanup
+        self._track_temp_file(final_video_path)
         
-        video_filename = os.path.basename(final_video_path)
+        logger.info("="*80)
+        logger.info(f"🎉 YOUR CINEMATIC TRAVEL VIDEO IS COMPLETE!")
+        logger.info(f"📁 Path: {final_video_path}")
+        logger.info(f"📅 {len(day_video_paths)} days of cinematic travel content")
+        logger.info(f"⚠️ Note: Video will be auto-cleaned after session ends")
+        logger.info("="*80)
         
         if progress_callback:
             progress_callback({
                 "current_day": duration,
                 "total_days": duration,
                 "progress": 100,
-                "current_stage": "🎬 Your travel vlog is ready!",
+                "current_stage": "🎬 Your cinematic travel video is ready!",
                 "completed_days": duration
             })
         
         return {
             "success": True,
-            "video_url": f"/videos/{video_filename}",
+            "video_url": f"/videos/{final_video_filename}",
             "video_path": final_video_path,
+            "video_id": video_id,
             "days_covered": len(day_video_paths),
             "total_days": duration,
-            "status": "completed"
+            "status": "completed",
+            "temporary": True  # Indicates video will be cleaned up
         }
     
     def _generate_video_with_images(
@@ -559,22 +506,22 @@ class VideoGenerationService:
         destination: str,
         duration: int
     ) -> Dict[str, Any]:
-        """Generate video with the person from reference photo doing planned activities."""
+        """Generate video with the traveler from reference photo at actual locations."""
         try:
             payload = {
                 "prompt": prompt,
                 "imageUrls": image_urls,
                 "model": model,
                 "aspectRatio": "16:9",
-                "generationType": "REFERENCE_2_VIDEO",
+                "generationType": "FIRST_AND_LAST_FRAMES_2_VIDEO",
                 "enableTranslation": True,
                 "enableFallback": True,
                 "personGeneration": "allow_adult",
-                "generateAudio": True,
-                "negativePrompt": "different person, wrong identity, wrong face, static image, no movement, frozen, text overlay, watermark, logo, boring, dull, lifeless, sad expression"
+                "generateAudio": False,
+                "negativePrompt": "different person, inconsistent face, static pose, fake smile, tourist posing, blank expression, bored look, mannequin, doll, plastic look, text overlay, watermark, logo, blurry, shaky camera, bad lighting, cartoon, animation, frozen frame, slow motion, dull colors"
             }
             
-            logger.info(f"🔧 Generating vlog-style video with timeline guidance...")
+            logger.info(f"🔧 Generating cinematic video with reference person...")
             
             response = requests.post(
                 f"{self.base_url}/generate",
@@ -678,6 +625,9 @@ class VideoGenerationService:
             response = requests.get(video_url, stream=True, timeout=120)
             response.raise_for_status()
             
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
             with open(output_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
@@ -691,7 +641,6 @@ class VideoGenerationService:
     def _merge_videos(self, video_paths: List[str], output_path: str) -> bool:
         """Merge day videos with smooth transitions."""
         try:
-            from moviepy.editor import VideoFileClip, concatenate_videoclips
             
             clips = [VideoFileClip(p) for p in video_paths]
             final_clip = concatenate_videoclips(clips, method="compose")
@@ -712,10 +661,14 @@ class VideoGenerationService:
                 clip.close()
             
             if os.path.exists(output_path):
-                logger.info(f"✅ Final vlog video: {output_path}")
+                logger.info(f"✅ Final cinematic video: {output_path}")
                 return True
             return False
             
         except Exception as e:
             logger.error(f"❌ Merge failed: {e}")
             return False
+    
+    def __del__(self):
+        """Cleanup on instance destruction."""
+        self.cleanup_session_files()
