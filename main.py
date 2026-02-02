@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 import logging
 import shutil
 import traceback
+import base64
 
 from itinerary_service import ItineraryService
 from demo_data import DemoDataManager
@@ -531,20 +532,39 @@ async def generate_video_background(
         )
         
         if result.get("success"):
+            # Convert video to base64
+            video_path = result.get("video_path")
+            video_base64 = None
+            
+            if video_path and os.path.exists(video_path):
+                try:
+                    logger.info(f"📦 Converting video to base64: {video_path}")
+                    with open(video_path, "rb") as video_file:
+                        video_bytes = video_file.read()
+                        video_base64 = base64.b64encode(video_bytes).decode('utf-8')
+                    logger.info(f"✅ Video converted to base64 successfully")
+                except Exception as e:
+                    logger.error(f"❌ Error converting video to base64: {e}")
+            
             video_tasks[video_id].update({
                 "status": "completed",
                 "progress": 100,
-                "video_url": result.get("video_url"),
-                "video_path": result.get("video_path"),
+                "itinerary_id": itinerary_id,  
+                "video_id": video_id, 
                 "completed_at": datetime.now().isoformat(),
                 "days_covered": result.get("days_covered", duration),
-                "message": "Video complete!"
+                "message": "Video complete!",
+                "video_url": result.get("video_url"),
+                "video_path": result.get("video_path"),
+                "video_base64": video_base64
             })
             logger.info(f"✅ Video generation completed for {video_id}")
         else:
             video_tasks[video_id].update({
                 "status": "failed",
                 "error": result.get("error", "Unknown error"),
+                "itinerary_id": itinerary_id,
+                "video_id": video_id,
                 "message": f"Failed: {result.get('error', 'Unknown error')}"
             })
             logger.error(f"❌ Video generation failed for {video_id}")
@@ -555,9 +575,10 @@ async def generate_video_background(
         video_tasks[video_id].update({
             "status": "failed",
             "error": str(e),
+            "itinerary_id": itinerary_id,
+            "video_id": video_id,
             "message": f"Error: {str(e)}"
         })
-
 
 # =============================================================================
 # Main Entry Point
