@@ -1,0 +1,1530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Travel Itinerary</title>
+    <link rel="stylesheet" href="/static/css/itinerary.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <style>
+        /* Multi-city badge */
+        .multi-city-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+        
+        .city-tag {
+            background: rgba(255,255,255,0.2);
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+        }
+
+        /* City indicator in day card */
+        .day-city-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #e3f2fd;
+            color: #1565c0;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        /* Video Generation Section */
+        .video-section {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin: 30px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .video-section h2 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            color: #1a202c;
+        }
+        
+        .video-subtitle {
+            color: #718096;
+            margin-bottom: 25px;
+        }
+        
+        .photo-upload-container {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 20px;
+            padding: 20px;
+            background: #f7fafc;
+            border-radius: 8px;
+            border: 2px dashed #cbd5e0;
+        }
+        
+        .upload-preview {
+            width: 120px;
+            height: 120px;
+            border-radius: 8px;
+            object-fit: cover;
+            display: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        
+        .upload-info {
+            flex: 1;
+        }
+        
+        .upload-label {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s;
+            font-weight: 600;
+        }
+        
+        .upload-label:hover {
+            transform: translateY(-2px);
+        }
+        
+        #photoUpload {
+            display: none;
+        }
+        
+        .upload-status {
+            margin-top: 10px;
+            color: #4a5568;
+        }
+        
+        .generate-video-btn {
+            width: 100%;
+            padding: 18px;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(245, 87, 108, 0.3);
+        }
+        
+        .generate-video-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(245, 87, 108, 0.4);
+        }
+        
+        .generate-video-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        /* Activity photos */
+        .activity-photo {
+            width: 100%;
+            max-height: 200px;
+            object-fit: cover;
+            border-radius: 8px;
+            margin-top: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+        
+        .activity-photo:hover {
+            transform: scale(1.02);
+        }
+
+        /* Recommended Experiences Section */
+        .experiences-section {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin: 30px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .experiences-section h2 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            color: #1a202c;
+        }
+        
+        .section-subtitle {
+            color: #718096;
+            margin-bottom: 25px;
+        }
+        
+        .experiences-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .experience-category {
+            background: #f7fafc;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .experience-category h3 {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 18px;
+            margin-bottom: 10px;
+            color: #2d3748;
+        }
+        
+        .experience-category > p {
+            color: #718096;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+        
+        .experience-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            transition: transform 0.2s, box-shadow 0.2s;
+            cursor: pointer;
+        }
+        
+        .experience-item:hover {
+            transform: translateX(5px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .experience-item img {
+            width: 60px;
+            height: 60px;
+            border-radius: 8px;
+            object-fit: cover;
+            flex-shrink: 0;
+        }
+        
+        .experience-placeholder {
+            width: 60px;
+            height: 60px;
+            background: #e2e8f0;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            flex-shrink: 0;
+        }
+        
+        .experience-item-info {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .experience-item-name {
+            font-weight: 600;
+            color: #2d3748;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+        
+        .experience-item-desc {
+            font-size: 12px;
+            color: #718096;
+            line-height: 1.4;
+            margin-bottom: 6px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        
+        .experience-item-meta {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 12px;
+            color: #718096;
+        }
+        
+        .experience-item-price {
+            color: #10b981;
+            font-weight: 600;
+        }
+        
+        .more-experiences {
+            text-align: center;
+            padding: 10px;
+            color: #667eea;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        
+        /* Budget Details Modal */
+        .budget-detail-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .budget-detail-modal.show {
+            display: flex;
+        }
+        
+        .budget-detail-content {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .budget-detail-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .budget-detail-header h3 {
+            font-size: 22px;
+            color: #1a202c;
+        }
+        
+        .budget-detail-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #718096;
+        }
+        
+        .budget-calculation {
+            background: #f7fafc;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        
+        .calculation-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .calculation-row:last-child {
+            border-bottom: none;
+        }
+        
+        .calculation-label {
+            color: #4a5568;
+        }
+        
+        .calculation-value {
+            font-weight: 600;
+            color: #2d3748;
+        }
+        
+        .calculation-formula {
+            background: #edf2f7;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-family: monospace;
+            font-size: 14px;
+            color: #4a5568;
+        }
+        
+        .calculation-total {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 2px solid #e2e8f0;
+        }
+        
+        .calculation-total .calculation-value {
+            color: #10b981;
+            font-size: 18px;
+        }
+        
+        /* Clickable budget rows */
+        .budget-row {
+            cursor: pointer;
+            transition: background 0.2s;
+            padding: 12px;
+            border-radius: 8px;
+            margin: 4px 0;
+        }
+        
+        .budget-row:hover {
+            background: #f0f4f8;
+        }
+        
+        .budget-row .view-details {
+            font-size: 12px;
+            color: #667eea;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        
+        .budget-row:hover .view-details {
+            opacity: 1;
+        }
+
+        /* PDF Download Button */
+        .download-pdf-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 14px 28px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .download-pdf-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+        }
+
+        /* Attraction images */
+        .attraction-image {
+            width: 100%;
+            max-height: 250px;
+            object-fit: cover;
+            border-radius: 8px;
+            margin-top: 15px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .attraction-images-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .attraction-images-grid img {
+            width: 100%;
+            height: 120px;
+            object-fit: cover;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .attraction-images-grid img:hover {
+            transform: scale(1.05);
+        }
+
+        /* Recommendations Section Styles */
+        .recommendations-section {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin: 30px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .recommendations-section h2 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            color: #1a202c;
+        }
+        
+        .recommendations-carousel {
+            position: relative;
+            margin-top: 20px;
+        }
+        
+        .recommendations-scroll {
+            display: flex;
+            gap: 20px;
+            overflow-x: auto;
+            scroll-behavior: smooth;
+            padding: 10px 5px;
+            scrollbar-width: thin;
+            scrollbar-color: #cbd5e0 #f7fafc;
+        }
+        
+        .recommendations-scroll::-webkit-scrollbar {
+            height: 8px;
+        }
+        
+        .recommendations-scroll::-webkit-scrollbar-track {
+            background: #f7fafc;
+            border-radius: 4px;
+        }
+        
+        .recommendations-scroll::-webkit-scrollbar-thumb {
+            background: #cbd5e0;
+            border-radius: 4px;
+        }
+        
+        .recommendations-scroll::-webkit-scrollbar-thumb:hover {
+            background: #a0aec0;
+        }
+        
+        .carousel-btn {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background: white;
+            border: 2px solid #e2e8f0;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            font-size: 24px;
+            cursor: pointer;
+            z-index: 10;
+            transition: all 0.3s;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .carousel-btn:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+        
+        .carousel-prev {
+            left: -15px;
+        }
+        
+        .carousel-next {
+            right: -15px;
+        }
+        
+        /* Flight Card */
+        .flight-card {
+            min-width: 320px;
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.3s;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        
+        .flight-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+            border-color: #667eea;
+        }
+        
+        .airline-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 15px;
+        }
+        
+        .airline-logo {
+            width: 60px;
+            height: 60px;
+            object-fit: contain;
+            background: white;
+            border-radius: 8px;
+            padding: 5px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .airline-info h4 {
+            margin: 0;
+            font-size: 16px;
+            color: #2d3748;
+        }
+        
+        .flight-number {
+            font-size: 12px;
+            color: #718096;
+        }
+        
+        .flight-route {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin: 15px 0;
+            padding: 15px;
+            background: #f7fafc;
+            border-radius: 8px;
+        }
+        
+        .route-point {
+            text-align: center;
+        }
+        
+        .route-code {
+            font-size: 20px;
+            font-weight: 700;
+            color: #2d3748;
+        }
+        
+        .route-time {
+            font-size: 14px;
+            color: #4a5568;
+            margin-top: 4px;
+        }
+        
+        .route-arrow {
+            flex: 1;
+            text-align: center;
+            color: #cbd5e0;
+            font-size: 24px;
+        }
+        
+        .flight-details {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 15px;
+            border-top: 1px solid #e2e8f0;
+        }
+        
+        .flight-info {
+            display: flex;
+            gap: 15px;
+            font-size: 13px;
+            color: #718096;
+        }
+        
+        .flight-price {
+            font-size: 22px;
+            font-weight: 700;
+            color: #10b981;
+        }
+        
+        .per-person {
+            font-size: 12px;
+            color: #718096;
+            font-weight: normal;
+        }
+        
+        .stops-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            background: #e3f2fd;
+            color: #1565c0;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .no-flights-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 30px;
+            border-radius: 16px;
+            text-align: center;
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .no-flights-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            opacity: 0.9;
+        }
+
+        .no-flights-card h3 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 15px;
+        }
+
+        .no-flights-card p {
+            font-size: 16px;
+            line-height: 1.6;
+            opacity: 0.95;
+        }
+
+        .no-flights-card ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .no-flights-card ul li {
+            padding: 8px 0;
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .no-flights-card ul li:before {
+            content: "• ";
+            margin-right: 8px;
+        }
+        
+        /* Hotel Card */
+        .hotel-card {
+            min-width: 280px;
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            overflow: hidden;
+            transition: all 0.3s;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        
+        .hotel-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+            border-color: #667eea;
+        }
+        
+        .hotel-image {
+            width: 100%;
+            height: 180px;
+            object-fit: cover;
+        }
+        
+        .hotel-content {
+            padding: 16px;
+        }
+        
+        .hotel-name {
+            font-size: 16px;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 8px;
+        }
+        
+        .hotel-rating {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        
+        .rating-stars {
+            color: #f59e0b;
+            font-size: 14px;
+        }
+        
+        .rating-count {
+            font-size: 12px;
+            color: #718096;
+        }
+        
+        .hotel-price-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 12px;
+            border-top: 1px solid #e2e8f0;
+        }
+        
+        .hotel-price {
+            font-size: 20px;
+            font-weight: 700;
+            color: #10b981;
+        }
+        
+        .price-label {
+            font-size: 12px;
+            color: #718096;
+            font-weight: normal;
+        }
+        
+        .hotel-category {
+            display: inline-block;
+            padding: 4px 10px;
+            background: #fef3c7;
+            color: #92400e;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: capitalize;
+        }
+        
+        /* Restaurant Card */
+        .restaurant-card {
+            min-width: 280px;
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            overflow: hidden;
+            transition: all 0.3s;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        
+        .restaurant-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+            border-color: #667eea;
+        }
+        
+        .restaurant-image {
+            width: 100%;
+            height: 180px;
+            object-fit: cover;
+        }
+        
+        .restaurant-content {
+            padding: 16px;
+        }
+        
+        .restaurant-name {
+            font-size: 16px;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 8px;
+        }
+        
+        .cuisine-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            background: #e0f2fe;
+            color: #075985;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .restaurant-rating {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        
+        .restaurant-price-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 12px;
+            border-top: 1px solid #e2e8f0;
+        }
+        
+        .restaurant-price {
+            font-size: 18px;
+            font-weight: 700;
+            color: #10b981;
+        }
+        
+        .price-range {
+            display: flex;
+            gap: 2px;
+        }
+        
+        .price-symbol {
+            color: #10b981;
+            font-weight: 600;
+        }
+        
+        .price-symbol.inactive {
+            color: #cbd5e0;
+        }
+
+        /* Detailed Budget Breakdown Styles */
+        .budget-summary {
+            background: #f7fafc;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .budget-summary-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #e2e8f0;
+            cursor: pointer;
+            transition: background 0.2s;
+            border-radius: 6px;
+            padding-left: 10px;
+            padding-right: 10px;
+        }
+
+        .budget-summary-row:last-child {
+            border-bottom: none;
+        }
+
+        .budget-summary-row:hover {
+            background: #edf2f7;
+        }
+
+        .summary-label {
+            font-size: 16px;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .summary-amount {
+            font-size: 18px;
+            font-weight: 700;
+            color: #10b981;
+        }
+
+        .detailed-breakdown-container {
+            margin-top: 30px;
+        }
+
+        .breakdown-section {
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .breakdown-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #1a202c;
+            margin-bottom: 10px;
+        }
+
+        .breakdown-subtitle {
+            font-size: 14px;
+            color: #718096;
+            margin-bottom: 15px;
+        }
+
+        .breakdown-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 12px;
+            background: #f7fafc;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .breakdown-item-info {
+            flex: 1;
+        }
+
+        .breakdown-item-name {
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 4px;
+        }
+
+        .breakdown-item-detail {
+            font-size: 13px;
+            color: #718096;
+        }
+
+        .breakdown-item-location {
+            font-size: 12px;
+            color: #a0aec0;
+            margin-top: 2px;
+        }
+
+        .breakdown-item-cost {
+            font-size: 18px;
+            font-weight: 700;
+            color: #10b981;
+            white-space: nowrap;
+            margin-left: 15px;
+        }
+
+        .breakdown-item-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .badge-must {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge-recommended {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .badge-optional {
+            background: #f3e8ff;
+            color: #6b21a8;
+        }
+
+        .section-total {
+            display: flex;
+            justify-content: space-between;
+            padding: 15px;
+            background: #edf2f7;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-weight: 700;
+            font-size: 18px;
+            color: #2d3748;
+        }
+
+        .section-total span:last-child {
+            color: #10b981;
+        }
+
+        /* Toggle visibility */
+        .breakdown-section.collapsed {
+            display: none;
+        }
+
+        /* Contingency table style */
+        .contingency-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .contingency-table th {
+            background: #edf2f7;
+            padding: 10px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 13px;
+            color: #4a5568;
+            border-bottom: 2px solid #cbd5e0;
+        }
+
+        .contingency-table td {
+            padding: 10px;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 13px;
+        }
+
+        .contingency-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .how-to-minimize {
+            font-size: 12px;
+            color: #718096;
+        }
+        
+        .breakdown-section {
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: none; /* Start hidden */
+        }
+
+        .breakdown-section.show {
+            display: block;
+        }
+
+        /* Add hover effect to summary rows */
+        .budget-summary-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 15px;
+            border-bottom: 1px solid #e2e8f0;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-radius: 6px;
+            margin: 4px 0;
+        }
+
+        .budget-summary-row:hover {
+            background: #edf2f7;
+            transform: translateX(3px);
+        }
+
+        .budget-summary-row::after {
+            content: '▼';
+            font-size: 12px;
+            color: #a0aec0;
+            transition: transform 0.2s;
+        }
+
+        .budget-summary-row.active::after {
+            transform: rotate(180deg);
+        }
+
+         .reallocation-checkbox:hover {
+            border-color: #10b981 !important;
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
+            transform: translateY(-2px);
+        }
+        
+        .reallocation-checkbox input:checked {
+            accent-color: #10b981;
+        }
+        
+        .reallocate-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        }
+
+        /* Hide elements when generating PDF */
+        @media print {
+            .chat-toggle-btn,
+            .chat-window,
+            .download-pdf-btn,
+            .video-section {
+                display: none !important;
+            }
+        }
+
+        .pdf-generating {
+            pointer-events: none;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <!-- PDF Download Button -->
+    <button class="download-pdf-btn" id="downloadPdfBtn" onclick="downloadItineraryAsPDF()">
+        <span class="download-icon">📥</span>
+        <span>Download PDF</span>
+    </button>
+
+    <div class="itinerary-container" id="itineraryContent">
+        <!-- Header -->
+        <div class="header-section">
+            <div class="header-badge" id="headerBadge">
+                ⭐ 5 DAY ITINERARY
+            </div>
+            
+            <!-- Multi-city indicator -->
+            <div id="multiCityBadge" class="multi-city-badge" style="display: none;">
+                🌍 Multi-City Trip: <span id="cityList"></span>
+            </div>
+            
+            <div class="trip-details-card">
+                <h2>Confirm Your Trip Details</h2>
+                <p class="subtitle">Please Review Your Trip Details Before Booking.</p>
+                <div class="details-grid">
+                    <div class="detail-item">
+                        <span class="detail-icon">🌍</span>
+                        <div>
+                            <div class="detail-label">Destination</div>
+                            <div class="detail-value" id="detailDestination">Paris, France</div>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-icon">💰</span>
+                        <div>
+                            <div class="detail-label">Total Budget</div>
+                            <div class="detail-value" id="detailBudget">$3,500</div>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-icon">📅</span>
+                        <div>
+                            <div class="detail-label">Duration</div>
+                            <div class="detail-value" id="detailDuration">5 Days</div>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-icon">👥</span>
+                        <div>
+                            <div class="detail-label">Travelers</div>
+                            <div class="detail-value" id="detailTravelers">2 Adults</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Daily Activities -->
+        <div class="activities-section" id="activitiesSection">
+            <!-- Activities will be dynamically inserted here -->
+        </div>
+
+        <!-- Recommended Experiences Section -->
+        <div class="experiences-section" id="experiencesSection">
+            <h2>🎭 Recommended Experiences</h2>
+            <p class="section-subtitle">Unique tours, excursions, and must-see attractions for your trip</p>
+            <div class="experiences-grid" id="experiencesGrid">
+                <!-- Experiences will be dynamically inserted here -->
+            </div>
+        </div>
+
+        <!-- Video Generation Section -->
+        <div class="video-section">
+            <h2>🎥 Generate Your Travel Video</h2>
+            <p class="video-subtitle">Create an AI-powered video showcasing your entire itinerary</p>
+            
+            <div class="photo-upload-container">
+                <img id="uploadPreview" class="upload-preview" alt="Your photo">
+                <div class="upload-info">
+                    <label for="photoUpload" class="upload-label">
+                        📸 Upload Your Photo
+                    </label>
+                    <input type="file" id="photoUpload" accept="image/*" onchange="handlePhotoUpload(event)">
+                    <p class="upload-status" id="uploadStatus">Upload a photo of yourself to appear in the video</p>
+                </div>
+            </div>
+            
+            <button class="generate-video-btn" id="generateVideoBtn" onclick="generateVideo()" disabled>
+                🎬 Generate Video (Coming Soon)
+            </button>
+        </div>
+
+        <!-- Budget Breakdown -->
+        <div class="budget-section">
+            <div class="budget-card">
+                <h2>Your Detailed Budget Breakdown</h2>
+                <p class="budget-subtitle">Real itemized costs based on selected activities</p>
+                
+                <!-- Summary Chart -->
+                <div class="budget-chart-container">
+                    <canvas id="budgetChart"></canvas>
+                </div>
+
+                <!-- Category Summary -->
+                <div class="budget-summary">
+                    <div class="budget-summary-row">
+                        <span class="summary-label">✈️ Flights</span>
+                        <span class="summary-amount" id="summaryFlights">$0</span>
+                    </div>
+                    <div class="budget-summary-row">
+                        <span class="summary-label">🏨 Hotels</span>
+                        <span class="summary-amount" id="summaryHotels">$0</span>
+                    </div>
+                    <div class="budget-summary-row">
+                        <span class="summary-label">🎭 Activities</span>
+                        <span class="summary-amount" id="summaryActivities">$0</span>
+                    </div>
+                    <div class="budget-summary-row">
+                        <span class="summary-label">🍔 Food</span>
+                        <span class="summary-amount" id="summaryFood">$0</span>
+                    </div>
+                    <div class="budget-summary-row">
+                        <span class="summary-label">🚗 Transport</span>
+                        <span class="summary-amount" id="summaryTransport">$0</span>
+                    </div>
+                    <div class="budget-summary-row">
+                        <span class="summary-label">💼 Contingency</span>
+                        <span class="summary-amount" id="summaryContingency">$0</span>
+                    </div>
+                </div>
+
+                <!-- Detailed Breakdown Sections -->
+                <div class="detailed-breakdown-container">
+                    
+                    <!-- Flights Detail -->
+                    <div class="breakdown-section" id="flightsBreakdownSection" style="display: none;">
+                        <h3 class="breakdown-title">✈️ Flights</h3>
+                        <div id="flightsBreakdownContent"></div>
+                    </div>
+
+                    <!-- Hotels Detail -->
+                    <div class="breakdown-section" id="hotelsBreakdownSection" style="display: none;">
+                        <h3 class="breakdown-title">🏨 Accommodation</h3>
+                        <div id="hotelsBreakdownContent"></div>
+                    </div>
+
+                    <!-- Must-Do Activities -->
+                    <div class="breakdown-section" id="mustDoBreakdownSection" style="display: none;">
+                        <h3 class="breakdown-title">🎯 Must-Do Activities</h3>
+                        <p class="breakdown-subtitle">Essential experiences included in your itinerary</p>
+                        <div id="mustDoBreakdownContent"></div>
+                        <div class="section-total">
+                            <span>Must-Do Subtotal:</span>
+                            <span id="mustDoTotal">$0</span>
+                        </div>
+                    </div>
+
+                    <!-- Recommended Activities -->
+                    <div class="breakdown-section" id="recommendedBreakdownSection" style="display: none;">
+                        <h3 class="breakdown-title">⭐ Recommended Activities</h3>
+                        <p class="breakdown-subtitle">Additional experiences to enhance your trip</p>
+                        <div id="recommendedBreakdownContent"></div>
+                        <div class="section-total">
+                            <span>Recommended Subtotal:</span>
+                            <span id="recommendedTotal">$0</span>
+                        </div>
+                    </div>
+
+                    <!-- Optional Activities -->
+                    <div class="breakdown-section" id="optionalBreakdownSection" style="display: none;">
+                        <h3 class="breakdown-title">💡 Optional Activities</h3>
+                        <p class="breakdown-subtitle">Available add-ons not included in current budget</p>
+                        <div id="optionalBreakdownContent"></div>
+                        <div class="section-total">
+                            <span>Optional Subtotal:</span>
+                            <span id="optionalTotal">$0</span>
+                        </div>
+                    </div>
+
+                    <!-- Food Detail -->
+                    <div class="breakdown-section" id="foodBreakdownSection" style="display: none;">
+                        <h3 class="breakdown-title">🍽️ Food Budget Breakdown</h3>
+                        <div id="foodBreakdownContent"></div>
+                        <div class="section-total">
+                            <span>Food Total:</span>
+                            <span id="foodTotal">$0</span>
+                        </div>
+                    </div>
+
+                    <!-- Transport Detail -->
+                    <div class="breakdown-section" id="transportBreakdownSection" style="display: none;">
+                        <h3 class="breakdown-title">🚗 Local Transport</h3>
+                        <div id="transportBreakdownContent"></div>
+                        <div class="section-total">
+                            <span>Transport Total:</span>
+                            <span id="transportTotal">$0</span>
+                        </div>
+                    </div>
+
+                    <!-- Contingency Detail -->
+                    <div class="breakdown-section" id="contingencyBreakdownSection" style="display: none;">
+                        <h3 class="breakdown-title">💼 Contingency & Miscellaneous</h3>
+                        <p class="breakdown-subtitle">Always reserve 5-10% for unexpected costs</p>
+                        <div id="contingencyBreakdownContent"></div>
+                    </div>
+
+                </div>
+
+                <!-- Budget Total -->
+                <div class="budget-total">
+                    <div class="total-label">💰 Total Estimated Cost</div>
+                    <div class="total-amount" id="totalEstimation">$0</div>
+                </div>
+
+                <div class="budget-remaining" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 25px; border-radius: 12px; margin: 20px 0; text-align: center;">
+                    <div class="remaining-label" style="font-size: 16px; opacity: 0.9; margin-bottom: 8px;">
+                        💰 Available for Reallocation
+                    </div>
+                    <div class="remaining-amount" id="remainingBudget" style="font-size: 36px; font-weight: 700;">
+                        $0
+                    </div>
+                    <div style="font-size: 13px; opacity: 0.8; margin-top: 8px;">
+                        You can reallocate this to any category or save it as contingency
+                    </div>
+                </div>
+
+                <div class="reallocation-section" id="reallocationSection" style="display: none; background: #f0fdf4; padding: 20px; border-radius: 12px; border: 2px solid #86efac;">
+                    <h3 style="color: #166534; margin-bottom: 15px;">🔥 Reallocate Your Remaining Budget</h3>
+                    <p style="color: #15803d; font-size: 14px; margin-bottom: 15px;">
+                        Select the categories you'd like to add funds to, then click "Reallocate Budget" to distribute your remaining balance proportionally.
+                    </p>
+                    <div class="reallocation-options" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 15px;">
+                        <label class="reallocation-checkbox" style="display: flex; align-items: center; padding: 12px; background: white; border-radius: 8px; cursor: pointer; border: 2px solid #d1fae5; transition: all 0.2s;">
+                            <input type="checkbox" value="flights" style="margin-right: 8px;">
+                            <span class="checkbox-icon" style="margin-right: 6px;">✈️</span>
+                            <span>Flights</span>
+                        </label>
+                        <label class="reallocation-checkbox" style="display: flex; align-items: center; padding: 12px; background: white; border-radius: 8px; cursor: pointer; border: 2px solid #d1fae5; transition: all 0.2s;">
+                            <input type="checkbox" value="hotels" style="margin-right: 8px;">
+                            <span class="checkbox-icon" style="margin-right: 6px;">🏨</span>
+                            <span>Hotels</span>
+                        </label>
+                        <label class="reallocation-checkbox" style="display: flex; align-items: center; padding: 12px; background: white; border-radius: 8px; cursor: pointer; border: 2px solid #d1fae5; transition: all 0.2s;">
+                            <input type="checkbox" value="food" style="margin-right: 8px;">
+                            <span class="checkbox-icon" style="margin-right: 6px;">🍔</span>
+                            <span>Food</span>
+                        </label>
+                        <label class="reallocation-checkbox" style="display: flex; align-items: center; padding: 12px; background: white; border-radius: 8px; cursor: pointer; border: 2px solid #d1fae5; transition: all 0.2s;">
+                            <input type="checkbox" value="activities" style="margin-right: 8px;">
+                            <span class="checkbox-icon" style="margin-right: 6px;">🎭</span>
+                            <span>Activities</span>
+                        </label>
+                        <label class="reallocation-checkbox" style="display: flex; align-items: center; padding: 12px; background: white; border-radius: 8px; cursor: pointer; border: 2px solid #d1fae5; transition: all 0.2s;">
+                            <input type="checkbox" value="travel" style="margin-right: 8px;">
+                            <span class="checkbox-icon" style="margin-right: 6px;">🚗</span>
+                            <span>Transport</span>
+                        </label>
+                    </div>
+                    <button class="reallocate-btn" onclick="reallocateBudget()" style="width: 100%; padding: 15px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 8px; font-weight: 700; font-size: 16px; cursor: pointer; transition: all 0.2s;">
+                        💰 Reallocate Budget
+                    </button>
+                </div>
+
+        <!-- Attractions & Activities Summary -->
+        <div class="attractions-section">
+            <div class="attractions-grid">
+                <div class="attraction-card">
+                    <h3>🏛️ Attractions</h3>
+                    <p class="attraction-description" id="attractionsDescription">
+                        Discover The Best Attractions That Capture The Essence Of Your Destination.
+                    </p>
+                    <ul class="attraction-list" id="attractionsList"></ul>
+                    <div class="attraction-images-grid" id="attractionImagesGrid"></div>
+                </div>
+
+                <div class="attraction-card">
+                    <h3>🎯 Activities</h3>
+                    <p class="attraction-description" id="activitiesDescription">
+                        Discover The Best Activities For Your Destination.
+                    </p>
+                    <ul class="attraction-list" id="activitiesList"></ul>
+                    <div class="attraction-images-grid" id="activityImagesGrid"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+        <!-- NEW: Flight Recommendations Section -->
+    <div class="recommendations-section" id="flightRecommendationsSection" style="display: none;">
+        <h2>✈️ Flight Recommendations</h2>
+        <p class="section-subtitle">Best flight options for your trip</p>
+        
+        <div class="recommendations-carousel">
+            <button class="carousel-btn carousel-prev" onclick="scrollCarousel('flightCarousel', -1)">
+                ‹
+            </button>
+            <div class="recommendations-scroll" id="flightCarousel">
+                <!-- Flights will be dynamically inserted here -->
+            </div>
+            <button class="carousel-btn carousel-next" onclick="scrollCarousel('flightCarousel', 1)">
+                ›
+            </button>
+        </div>
+    </div>
+
+    <!-- NEW: Hotel Recommendations Section -->
+    <div class="recommendations-section" id="hotelRecommendationsSection" style="display: none;">
+        <h2>🏨 Hotel Recommendations</h2>
+        <p class="section-subtitle">Handpicked accommodations for your stay</p>
+        
+        <div class="recommendations-carousel">
+            <button class="carousel-btn carousel-prev" onclick="scrollCarousel('hotelCarousel', -1)">
+                ‹
+            </button>
+            <div class="recommendations-scroll" id="hotelCarousel">
+                <!-- Hotels will be dynamically inserted here -->
+            </div>
+            <button class="carousel-btn carousel-next" onclick="scrollCarousel('hotelCarousel', 1)">
+                ›
+            </button>
+        </div>
+    </div>
+
+    <!-- NEW: Restaurant Recommendations Section -->
+    <div class="recommendations-section" id="restaurantRecommendationsSection" style="display: none;">
+        <h2>🍽️ Restaurant Recommendations</h2>
+        <p class="section-subtitle">Top dining experiences in your destination</p>
+        
+        <div class="recommendations-carousel">
+            <button class="carousel-btn carousel-prev" onclick="scrollCarousel('restaurantCarousel', -1)">
+                ‹
+            </button>
+            <div class="recommendations-scroll" id="restaurantCarousel">
+                <!-- Restaurants will be dynamically inserted here -->
+            </div>
+            <button class="carousel-btn carousel-next" onclick="scrollCarousel('restaurantCarousel', 1)">
+                ›
+            </button>
+        </div>
+    </div>
+
+    <!-- Budget Details Modal -->
+    <div class="budget-detail-modal" id="budgetDetailModal">
+        <div class="budget-detail-content">
+            <div class="budget-detail-header">
+                <h3 id="budgetDetailTitle">Budget Details</h3>
+                <button class="budget-detail-close" onclick="closeBudgetDetails()">×</button>
+            </div>
+            <div class="budget-calculation" id="budgetDetailContent">
+                <!-- Details will be dynamically inserted -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Chat Button -->
+    <button class="chat-toggle-btn" onclick="toggleChat()">
+        <span class="chat-icon">💬</span>
+        <span class="chat-text">AI Itinerary Helper</span>
+    </button>
+
+    <!-- Chat Window -->
+    <div class="chat-window" id="chatWindow">
+        <div class="chat-header">
+            <div class="chat-header-content">
+                <span class="chat-bot-icon">🤖</span>
+                <div>
+                    <h3>Chat With AI</h3>
+                    <span class="chat-status">● Online</span>
+                </div>
+            </div>
+            <div class="chat-actions">
+                <button onclick="minimizeChat()" class="chat-action-btn">—</button>
+                <button onclick="toggleChat()" class="chat-action-btn">✕</button>
+            </div>
+        </div>
+        
+        <div class="chat-messages" id="chatMessages">
+            <div class="chat-message bot-message">
+                <div class="message-avatar">🤖</div>
+                <div class="message-content">
+                    👋 Hi! I'm your travel assistant. I can help you modify your itinerary - change destinations, adjust activities, or answer questions about your trip. What would you like to do?
+                </div>
+            </div>
+        </div>
+
+        <div class="chat-input-container">
+            <input 
+                type="text" 
+                id="chatInput" 
+                class="chat-input" 
+                placeholder="Type your message..."
+                onkeypress="handleChatKeyPress(event)"
+            >
+            <button onclick="sendMessage()" class="chat-send-btn">➤</button>
+        </div>
+    </div>
+
+    <!-- Loading Modal -->
+    <div id="loadingModal" class="modal">
+        <div class="modal-content loading-content">
+            <div class="spinner"></div>
+            <p id="loadingText">Processing your request...</p>
+        </div>
+    </div>
+
+    <script>
+        // Get itinerary ID from URL
+        const pathSegments = window.location.pathname.split('/');
+        const itineraryId = pathSegments[pathSegments.length - 1];
+        console.log('🆔 Itinerary ID:', itineraryId);
+        
+        // Store uploaded photo
+        let uploadedPhotoFilename = null;
+    </script>
+    <script src="/static/js/itinerary.js"></script>
+</body>
+</html>

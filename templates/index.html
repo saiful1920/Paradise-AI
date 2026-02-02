@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Your Custom Itinerary</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="form-card">
+            <h1 class="form-title">Create Your Custom Itinerary</h1>
+            
+            <form id="itineraryForm">
+                <!-- User Location (Origin) -->
+                <div class="form-group">
+                    <label class="form-label">
+                        <span class="icon">📍</span>
+                        Where Are You Traveling From? <span class="required">*</span>
+                    </label>
+                    <input 
+                        type="text" 
+                        id="userLocation" 
+                        class="form-input" 
+                        placeholder="Enter Your City (e.g., New York, London, Tokyo)"
+                        required
+                        list="origin-suggestions"
+                    >
+                    <datalist id="origin-suggestions">
+                        <option value="New York">
+                        <option value="Los Angeles">
+                        <option value="London">
+                        <option value="Tokyo">
+                        <option value="Dubai">
+                        <option value="Singapore">
+                        <option value="Sydney">
+                        <option value="Toronto">
+                        <option value="Paris">
+                        <option value="Hong Kong">
+                    </datalist>
+                    <p class="input-hint">This helps us find the best flights for you</p>
+                </div>
+
+                <!-- Destination -->
+                <div class="form-group">
+                    <label class="form-label">
+                        <span class="icon">🌍</span>
+                        Where Do You Want To Travel? <span class="required">*</span>
+                    </label>
+                    <input 
+                        type="text" 
+                        id="destination" 
+                        class="form-input" 
+                        placeholder="Enter country, city, or multiple cities (e.g., Japan, Paris and Rome, beaches in Thailand)"
+                        required
+                        list="destination-suggestions"
+                    >
+                    <datalist id="destination-suggestions">
+                        <option value="Japan">
+                        <option value="Italy">
+                        <option value="France">
+                        <option value="Thailand">
+                        <option value="Bali">
+                        <option value="Paris">
+                        <option value="Tokyo">
+                        <option value="New York">
+                        <option value="London">
+                        <option value="Tokyo and Kyoto">
+                        <option value="Rome, Florence and Venice">
+                        <option value="Beaches in Thailand">
+                    </datalist>
+                    <p class="input-hint">💡 Tip: Enter a country name and we'll suggest the best cities, or specify multiple cities!</p>
+                </div>
+
+                <!-- Budget Slider -->
+                <div class="form-group">
+                    <label class="form-label">
+                        <span class="icon">💰</span>
+                        Set Your Budget <span class="required">*</span>
+                    </label>
+                    <div class="budget-slider-container">
+                        <div class="budget-value" id="budgetValue">$ 3,000</div>
+                        <input 
+                            type="range" 
+                            id="budget" 
+                            class="budget-slider" 
+                            min="500" 
+                            max="15000" 
+                            value="3000" 
+                            step="100"
+                        >
+                        <div class="budget-labels">
+                            <span>$ 500</span>
+                            <span>$ 5,000</span>
+                            <span>$ 10,000</span>
+                            <span>$ 15,000</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Activity Preference -->
+                <div class="form-group">
+                    <label class="form-label">
+                        <span class="icon">📊</span>
+                        What Type Of Activities Would You Prefer? <span class="required">*</span>
+                    </label>
+                    <div class="activity-buttons">
+                        <button type="button" class="activity-btn active" data-value="relaxed">
+                            <span class="activity-icon">🏖️</span>
+                            Relaxed Vibe
+                            <span class="activity-desc">2 activities/day</span>
+                        </button>
+                        <button type="button" class="activity-btn" data-value="moderate">
+                            <span class="activity-icon">🚶</span>
+                            Moderate Pace
+                            <span class="activity-desc">3 activities/day</span>
+                        </button>
+                        <button type="button" class="activity-btn" data-value="high">
+                            <span class="activity-icon">🔥</span>
+                            High Adventure
+                            <span class="activity-desc">4+ activities/day</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Additional Trip Details -->
+                <div class="form-group">
+                    <label class="form-label">
+                        <span class="icon">📝</span>
+                        Include In Your Budget <span class="required">*</span>
+                    </label>
+                    <div class="checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="includeFlights">
+                            <span class="checkbox-custom"></span>
+                            <span>✈️ Include Flights</span>
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="includeHotels">
+                            <span class="checkbox-custom"></span>
+                            <span>🏨 Include Hotels</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Duration and Travelers -->
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">
+                            <span class="icon">🗓️</span>
+                            Trip Duration <span class="required">*</span>
+                        </label>
+                        <select id="duration" class="form-select" required>
+                            <option value="">Select duration</option>
+                            <option value="1">1 Day</option>
+                            <option value="2">2 Days</option>
+                            <option value="3">3 Days</option>
+                            <option value="4">4 Days</option>
+                            <option value="5" selected>5 Days</option>
+                            <option value="6">6 Days</option>
+                            <option value="7">7 Days (1 Week)</option>
+                            <option value="10">10 Days</option>
+                            <option value="14">14 Days (2 Weeks)</option>
+                            <option value="21">21 Days (3 Weeks)</option>
+                        </select>
+                        <p class="input-hint" id="durationHint">5 days = 1 city recommended</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">
+                            <span class="icon">👥</span>
+                            Number of Travelers <span class="required">*</span>
+                        </label>
+                        <select id="travelers" class="form-select" required>
+                            <option value="">Select travelers</option>
+                            <option value="1">Solo Trip</option>
+                            <option value="2" selected>2 Adults</option>
+                            <option value="3">3 People</option>
+                            <option value="4">4 People</option>
+                            <option value="5">5 People</option>
+                            <option value="6">6+ People</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Submit Button -->
+                <button type="submit" class="submit-btn" id="submitBtn">
+                    <span>Create My Itinerary</span>
+                    <span class="arrow">→</span>
+                </button>
+                
+                <p class="submit-hint">✨ Our AI will create a personalized itinerary with tours, experiences, and detailed budget breakdown</p>
+            </form>
+        </div>
+    </div>
+
+    <!-- Loading Modal -->
+    <div id="loadingModal" class="modal">
+        <div class="modal-content loading-content">
+            <div class="spinner"></div>
+            <p id="loadingMessage">Creating your perfect itinerary...</p>
+            <p class="loading-hint" id="loadingHint">Analyzing destinations and finding the best experiences</p>
+        </div>
+    </div>
+
+    <!-- Budget Warning Modal -->
+    <div id="budgetModal" class="modal">
+        <div class="modal-content budget-modal">
+            <h2>⚠️ Budget Adjustment Needed</h2>
+            <p id="budgetMessage"></p>
+            <div id="budgetBreakdownPreview" class="budget-preview"></div>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="closeBudgetModal()">Cancel</button>
+                <button class="btn-primary" onclick="adjustBudget()">Adjust Budget</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

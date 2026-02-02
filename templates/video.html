@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Travel Video | AI Travel Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 1; }
+            100% { transform: scale(1.4); opacity: 0; }
+        }
+        
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+        
+        .pulse-ring {
+            animation: pulse-ring 1.5s ease-out infinite;
+        }
+        
+        .shimmer {
+            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+        }
+        
+        .progress-bar {
+            transition: width 0.5s ease-out;
+        }
+        
+        .day-card {
+            transition: all 0.3s ease;
+        }
+        
+        .day-card.completed {
+            border-color: #10b981;
+            background: linear-gradient(to right, rgba(16, 185, 129, 0.1), transparent);
+        }
+        
+        .day-card.processing {
+            border-color: #3b82f6;
+            background: linear-gradient(to right, rgba(59, 130, 246, 0.1), transparent);
+        }
+        
+        .video-container {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 min-h-screen">
+    <!-- Header -->
+    <header class="bg-black/30 backdrop-blur-md border-b border-white/10">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+            <a href="/" class="flex items-center space-x-2">
+                <i class="fas fa-plane-departure text-blue-400 text-2xl"></i>
+                <span class="text-white font-bold text-xl">AI Travel</span>
+            </a>
+            <span class="text-gray-400 text-sm">Your Personal Travel Video</span>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-5xl mx-auto px-4 py-8">
+        <!-- Video Player Section -->
+        <div id="video-section" class="mb-8">
+            <div class="video-container shadow-2xl">
+                <!-- Video Player (hidden until ready) -->
+                <div id="video-player-container" class="hidden aspect-video">
+                    <video id="video-player" controls class="w-full h-full" poster="">
+                        <source id="video-source" src="" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                </div>
+                
+                <!-- Processing State -->
+                <div id="processing-state" class="aspect-video flex flex-col items-center justify-center p-8">
+                    <!-- Animated Icon -->
+                    <div class="relative mb-6">
+                        <div class="w-24 h-24 bg-blue-500/20 rounded-full flex items-center justify-center">
+                            <i class="fas fa-video text-blue-400 text-4xl"></i>
+                        </div>
+                        <div class="absolute inset-0 w-24 h-24 bg-blue-500/40 rounded-full pulse-ring"></div>
+                    </div>
+                    
+                    <!-- Status Text -->
+                    <h2 id="status-title" class="text-white text-2xl font-bold mb-2">Generating Your Video</h2>
+                    <p id="status-message" class="text-gray-400 text-center mb-6 max-w-md">
+                        Creating personalized travel videos for each day of your trip...
+                    </p>
+                    
+                    <!-- Progress Bar -->
+                    <div class="w-full max-w-md mb-4">
+                        <div class="flex justify-between text-sm text-gray-400 mb-2">
+                            <span id="progress-label">Processing...</span>
+                            <span id="progress-percent">0%</span>
+                        </div>
+                        <div class="h-3 bg-gray-700 rounded-full overflow-hidden">
+                            <div id="progress-bar" class="progress-bar h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Stage Info -->
+                    <div id="current-stage" class="text-sm text-gray-500 text-center">
+                        <i class="fas fa-spinner fa-spin mr-2"></i>
+                        <span id="stage-text">Initializing...</span>
+                    </div>
+                </div>
+                
+                <!-- Error State -->
+                <div id="error-state" class="hidden aspect-video flex flex-col items-center justify-center p-8 bg-red-900/20">
+                    <div class="w-24 h-24 bg-red-500/20 rounded-full flex items-center justify-center mb-6">
+                        <i class="fas fa-exclamation-triangle text-red-400 text-4xl"></i>
+                    </div>
+                    <h2 class="text-white text-2xl font-bold mb-2">Generation Failed</h2>
+                    <p id="error-message" class="text-red-300 text-center max-w-md">
+                        Something went wrong during video generation.
+                    </p>
+                    <button onclick="location.reload()" class="mt-6 px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition">
+                        <i class="fas fa-redo mr-2"></i>Try Again
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Day-by-Day Progress -->
+        <div id="days-progress" class="mb-8">
+            <h3 class="text-white text-lg font-semibold mb-4">
+                <i class="fas fa-calendar-alt text-blue-400 mr-2"></i>
+                Day-by-Day Generation Progress
+            </h3>
+            <div id="days-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                <!-- Day cards will be inserted here -->
+            </div>
+        </div>
+        
+        <!-- Video Info (shown when complete) -->
+        <div id="video-info" class="hidden bg-white/5 backdrop-blur-sm rounded-xl p-6 border border-white/10">
+            <h3 class="text-white text-lg font-semibold mb-4">
+                <i class="fas fa-info-circle text-blue-400 mr-2"></i>
+                Video Details
+            </h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-white/5 rounded-lg p-4">
+                    <div class="text-gray-400 text-sm mb-1">Duration</div>
+                    <div id="info-duration" class="text-white font-bold">--</div>
+                </div>
+                <div class="bg-white/5 rounded-lg p-4">
+                    <div class="text-gray-400 text-sm mb-1">Days Covered</div>
+                    <div id="info-days" class="text-white font-bold">--</div>
+                </div>
+                <div class="bg-white/5 rounded-lg p-4">
+                    <div class="text-gray-400 text-sm mb-1">Created</div>
+                    <div id="info-created" class="text-white font-bold">--</div>
+                </div>
+                <div class="bg-white/5 rounded-lg p-4">
+                    <div class="text-gray-400 text-sm mb-1">Status</div>
+                    <div id="info-status" class="text-green-400 font-bold">Ready</div>
+                </div>
+            </div>
+            
+            <!-- Action Buttons -->
+            <div class="flex flex-wrap gap-4 mt-6">
+                <a id="download-btn" href="#" download class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition flex items-center">
+                    <i class="fas fa-download mr-2"></i>Download Video
+                </a>
+                <button onclick="shareVideo()" class="px-6 py-3 bg-white/10 hover:bg-white/20 text-white rounded-lg transition flex items-center">
+                    <i class="fas fa-share-alt mr-2"></i>Share
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const videoId = "{{ video_id }}";
+        let pollingInterval = null;
+        let ws = null;
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            connectWebSocket();
+            startPolling();
+        });
+        
+        // WebSocket connection for real-time updates
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws/video-progress/${videoId}`);
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                updateUI(data);
+            };
+            
+            ws.onclose = () => {
+                console.log('WebSocket closed, relying on polling');
+            };
+        }
+        
+        // Polling fallback
+        function startPolling() {
+            pollingInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/video-status/${videoId}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        updateUI(data);
+                        
+                        if (data.status === 'completed' || data.status === 'failed') {
+                            clearInterval(pollingInterval);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                }
+            }, 3000);
+        }
+        
+        // Update UI based on status
+        function updateUI(data) {
+            // Update progress bar
+            const progress = data.progress || 0;
+            document.getElementById('progress-bar').style.width = `${progress}%`;
+            document.getElementById('progress-percent').textContent = `${progress}%`;
+            
+            // Update stage text
+            if (data.current_stage) {
+                document.getElementById('stage-text').textContent = data.current_stage;
+            }
+            
+            // Update day cards
+            updateDayCards(data.total_days || 3, data.current_day || 0, data.completed_days || 0);
+            
+            // Handle different states
+            if (data.status === 'completed') {
+                showVideoPlayer(data);
+            } else if (data.status === 'failed') {
+                showError(data.error);
+            } else {
+                // Update progress label
+                if (data.current_day) {
+                    document.getElementById('progress-label').textContent = `Processing Day ${data.current_day} of ${data.total_days}`;
+                }
+            }
+        }
+        
+        // Create day cards
+        function updateDayCards(totalDays, currentDay, completedDays) {
+            const grid = document.getElementById('days-grid');
+            
+            // Only create cards if they don't exist
+            if (grid.children.length === 0) {
+                for (let i = 1; i <= totalDays; i++) {
+                    const card = document.createElement('div');
+                    card.id = `day-card-${i}`;
+                    card.className = 'day-card border-2 border-gray-600 rounded-lg p-4 flex items-center space-x-3';
+                    card.innerHTML = `
+                        <div class="day-icon w-10 h-10 rounded-full flex items-center justify-center bg-gray-700">
+                            <span class="text-gray-400 font-bold">${i}</span>
+                        </div>
+                        <div>
+                            <div class="text-white font-medium">Day ${i}</div>
+                            <div class="day-status text-sm text-gray-400">Pending</div>
+                        </div>
+                    `;
+                    grid.appendChild(card);
+                }
+            }
+            
+            // Update card states
+            for (let i = 1; i <= totalDays; i++) {
+                const card = document.getElementById(`day-card-${i}`);
+                if (!card) continue;
+                
+                const icon = card.querySelector('.day-icon');
+                const status = card.querySelector('.day-status');
+                
+                if (i < currentDay || i <= completedDays) {
+                    // Completed
+                    card.className = 'day-card border-2 border-green-500 rounded-lg p-4 flex items-center space-x-3 completed';
+                    icon.innerHTML = '<i class="fas fa-check text-green-400"></i>';
+                    icon.className = 'day-icon w-10 h-10 rounded-full flex items-center justify-center bg-green-500/20';
+                    status.textContent = 'Complete';
+                    status.className = 'day-status text-sm text-green-400';
+                } else if (i === currentDay) {
+                    // Processing
+                    card.className = 'day-card border-2 border-blue-500 rounded-lg p-4 flex items-center space-x-3 processing';
+                    icon.innerHTML = '<i class="fas fa-spinner fa-spin text-blue-400"></i>';
+                    icon.className = 'day-icon w-10 h-10 rounded-full flex items-center justify-center bg-blue-500/20';
+                    status.textContent = 'Generating...';
+                    status.className = 'day-status text-sm text-blue-400';
+                }
+            }
+        }
+        
+        // Show video player when complete
+        function showVideoPlayer(data) {
+            // Hide processing state
+            document.getElementById('processing-state').classList.add('hidden');
+            document.getElementById('error-state').classList.add('hidden');
+            
+            // Show video player
+            const playerContainer = document.getElementById('video-player-container');
+            playerContainer.classList.remove('hidden');
+            
+            // Set video source
+            const videoSource = document.getElementById('video-source');
+            const videoPlayer = document.getElementById('video-player');
+            videoSource.src = data.video_url;
+            videoPlayer.load();
+            
+            // Show video info
+            document.getElementById('video-info').classList.remove('hidden');
+            
+            // Update info
+            const duration = data.duration_seconds || 0;
+            document.getElementById('info-duration').textContent = `${Math.round(duration)} seconds`;
+            document.getElementById('info-days').textContent = `${data.days_covered || 0} of ${data.total_days || 0}`;
+            document.getElementById('info-created').textContent = new Date().toLocaleDateString();
+            
+            // Set download link
+            document.getElementById('download-btn').href = data.video_url;
+            
+            // Update all day cards to complete
+            updateDayCards(data.total_days, data.total_days + 1, data.total_days);
+        }
+        
+        // Show error state
+        function showError(errorMsg) {
+            document.getElementById('processing-state').classList.add('hidden');
+            document.getElementById('video-player-container').classList.add('hidden');
+            
+            document.getElementById('error-state').classList.remove('hidden');
+            document.getElementById('error-message').textContent = errorMsg || 'An unexpected error occurred.';
+        }
+        
+        // Share video
+        function shareVideo() {
+            if (navigator.share) {
+                navigator.share({
+                    title: 'My Travel Video',
+                    text: 'Check out my AI-generated travel video!',
+                    url: window.location.href
+                });
+            } else {
+                // Fallback - copy to clipboard
+                navigator.clipboard.writeText(window.location.href);
+                alert('Link copied to clipboard!');
+            }
+        }
+    </script>
+</body>
+</html>
