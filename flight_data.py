@@ -548,20 +548,46 @@ class AviasalesFlightFormatter:
         limit: int
     ) -> List[Dict[str, Any]]:
         """
-        Internal method to try fetching flights
-        Returns list of flights or empty list
+        UPDATED: Fetch ALL flights from BOTH endpoints
+        Returns combined list of cheap + latest flights
         """
-        # Try cheap flights endpoint first
-        flights = self._fetch_cheap_flights(origin, destination, departure_date, return_date, currency, limit)
+        all_flights = []
         
-        if flights:
-            return flights
+        # Try cheap flights endpoint
+        cheap_flights = self._fetch_cheap_flights(origin, destination, departure_date, return_date, currency, limit)
+        if cheap_flights:
+            logger.info(f"✅ Got {len(cheap_flights)} flights from cheap endpoint")
+            all_flights.extend(cheap_flights)
         
-        # Fallback to latest prices
-        logger.info("💡 Trying latest prices endpoint...")
-        flights = self._fetch_latest_flights(origin, destination, limit, currency)
+        # Also try latest prices endpoint
+        logger.info("💡 Also fetching from latest prices endpoint...")
+        latest_flights = self._fetch_latest_flights(origin, destination, limit, currency)
+        if latest_flights:
+            logger.info(f"✅ Got {len(latest_flights)} flights from latest endpoint")
+            all_flights.extend(latest_flights)
         
-        return flights if flights else []
+        if not all_flights:
+            logger.info("📭 No flights found from either endpoint")
+            return []
+        
+        # Deduplicate based on flight details 
+        seen = set()
+        unique_flights = []
+        
+        for flight in all_flights:
+            # Create unique key
+            key = f"{flight.get('airline_code', '')}_{flight.get('price', 0)}_{flight.get('departure_time', '')}"
+            
+            if key not in seen:
+                seen.add(key)
+                unique_flights.append(flight)
+        
+        logger.info(f"✅ Returning {len(unique_flights)} unique flights (from {len(all_flights)} total)")
+        
+        # Sort by price (cheapest first)
+        unique_flights.sort(key=lambda x: x.get("price", 9999))
+        
+        return unique_flights[:limit]  
     
     # ========================================================================
     # API ENDPOINTS
