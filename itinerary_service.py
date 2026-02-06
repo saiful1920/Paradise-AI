@@ -294,31 +294,44 @@ class ItineraryService:
         travelers: int,
         activity_preference: str
     ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        IMPROVED: Now includes hotels and restaurants in selection
+        Each day will have access to real hotels and restaurants
+        """
 
         attractions = location_data.get("attractions", [])
         experiences = location_data.get("experiences", [])
-        restaurants = location_data.get("restaurants", [])
+        hotels = location_data.get("hotels", [])
 
-        total_required = duration * 3
+        # Calculate requirements
+        total_activities_needed = duration * 3 
         buffer = 2
 
-        logger.info(f"📊 Need {total_required} activities (+{buffer} buffer)")
+        logger.info(f"📊 Need {total_activities_needed} activities (+{buffer} buffer)")
+        logger.info(f"📊 Available: {len(attractions)} attractions, {len(experiences)} experiences")
+        logger.info(f"📊 Available: {len(hotels)} hotels")
 
         def score(item, cap=1000, weight=1.0):
+            """Calculate relevance score based on rating and review count"""
             return item.get("rating", 0) * min(item.get("user_ratings_total", 1), cap) * weight
 
+        # Sort all categories by quality
         attractions_sorted = sorted(attractions, key=lambda x: score(x), reverse=True)
         experiences_sorted = sorted(experiences, key=lambda x: score(x), reverse=True)
-        restaurants_sorted = sorted(
-            restaurants,
-            key=lambda x: score(x, cap=100, weight=0.7),
-            reverse=True
-        )
+        hotels_sorted = sorted(hotels, key=lambda x: score(x, cap=500), reverse=True)
 
-        must_do, recommended, optional = [], [], []
+        # Initialize collections
+        must_do = []
+        recommended = []
+        optional = []
         seen = set()
 
+        # Separate collections for hotels and restaurants
+        selected_hotels = []
+        selected_restaurants = []
+
         def add_unique(target, items, limit):
+            """Add items to target list, avoiding duplicates"""
             for item in items:
                 if len(target) >= limit:
                     return
@@ -328,38 +341,45 @@ class ItineraryService:
                 target.append(item)
                 seen.add(uid)
 
-        # --- CAPACITY SPLIT ---
-        must_do_limit = min(duration + 1, total_required)
-        recommended_limit = total_required - must_do_limit
-        optional_limit = buffer
+        # --- HOTELS SELECTION ---
+        hotels_needed = min(duration, 3)  
+        add_unique(selected_hotels, hotels_sorted, hotels_needed)
+        
+        logger.info(f"🏨 Selected {len(selected_hotels)} hotels for {duration} days")
 
-        # --- MUST DO ---
+        # --- ACTIVITIES SELECTION ---
+        # MUST DO: Top attractions (prioritize these)
+        must_do_limit = min(duration + 1, total_activities_needed)
         add_unique(must_do, attractions_sorted, must_do_limit)
         add_unique(must_do, experiences_sorted, must_do_limit)
 
-        # --- RECOMMENDED ---
+        # RECOMMENDED: Mix of attractions, experiences, and some restaurants
+        recommended_limit = total_activities_needed - must_do_limit
         add_unique(recommended, attractions_sorted[must_do_limit:], recommended_limit)
         add_unique(recommended, experiences_sorted, recommended_limit)
-        add_unique(recommended, restaurants_sorted, recommended_limit)
 
-        # --- OPTIONAL (BUFFER ONLY) ---
-        add_unique(optional, restaurants_sorted, optional_limit)
+        # OPTIONAL: Buffer activities
+        optional_limit = buffer
         add_unique(optional, attractions_sorted, optional_limit)
 
         logger.info(
             f"✅ Final selection → must_do: {len(must_do)}, "
             f"recommended: {len(recommended)}, optional: {len(optional)}"
         )
-
         logger.info(
-            f"🎯 Available activity pool: "
+            f"✅ Hotels: {len(selected_hotels)}, Restaurants: {len(selected_restaurants)}"
+        )
+        logger.info(
+            f"🎯 Total activity pool: "
             f"{len(must_do) + len(recommended) + len(optional)} unique activities"
         )
 
         return {
             "must_do": must_do,
             "recommended": recommended,
-            "optional": optional
+            "optional": optional,
+            "hotels": selected_hotels,  
+            "restaurants": selected_restaurants  
         }
 
     
@@ -424,7 +444,20 @@ class ItineraryService:
         
         logger.info(f"🎯 Available activity pool: {len(all_available)} unique activities")
         
-        prompt = f"""Create {duration}-day itinerary using ONLY activities from the list below.
+        # Add hotels
+        hotel_list = []
+        for hotel in selected_activities.get("hotels", []):
+            hotel_list.append({
+                "name": hotel.get("name"),
+                "price_per_night": hotel.get("price_per_night", 100),
+                "address": hotel.get("address", ""),
+                "city": hotel.get("city", cities[0])
+            })
+        
+        logger.info(f"🎯 Available activity pool: {len(all_available)} unique activities")
+        logger.info(f"🏨 Available hotels: {len(hotel_list)}")
+        
+        prompt = f"""Create {duration}-day itinerary using ONLY activities and hotels from the list below.
 
             CRITICAL RULES:
             1. Use ONLY activity names from "AVAILABLE ACTIVITIES"
@@ -433,6 +466,7 @@ class ItineraryService:
             4. Prioritize "must_do" activities first
             5. Use "recommended" for variety
             6. Fill remaining with "optional"
+            7. Use hotel for evening/meals when possible(if activity not available)
 
             TRIP DETAILS:
             - Duration: {duration} days
@@ -444,6 +478,9 @@ class ItineraryService:
 
             AVAILABLE ACTIVITIES (TOTAL: {len(all_available)}):
             {json.dumps(all_available[:60], indent=2)}
+
+            AVAILABLE HOTELS:
+            {json.dumps(hotel_list, indent=2)}
 
             Return ONLY valid JSON array with {duration} days:
             [
@@ -1333,7 +1370,7 @@ class ItineraryService:
         restaurants = location_data.get("restaurants", [])
         result = []
         
-        for r in restaurants[:8]:
+        for r in restaurants[:5]:
             restaurant_data = {
                 "name": r.get("name"),
                 "cuisine": r.get("cuisine"),
