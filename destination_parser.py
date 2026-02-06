@@ -30,20 +30,20 @@ class DestinationParser:
         self, 
         user_input: str, 
         duration: int = 3,
-        current_location: Optional[str] = None
+        user_location: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Parse ANY user input worldwide into structured destination(s) with intelligent origin detection.
         
         ENHANCED: Detects flight origin from:
         1. Explicit "from X" patterns in user input
-        2. Provided current_location parameter
+        2. Provided user_location parameter
         3. Contextual clues
         
         FIXED: If user explicitly provides multiple cities, use ALL of them
         Only suggest cities when user provides just a country name
         """
-        logger.info(f"🔍 Parsing: '{user_input}' for {duration} days (user location: {current_location or 'Not provided'})")
+        logger.info(f"🔍 Parsing: '{user_input}' for {duration} days (user location: {user_location or 'Not provided'})")
         
         try:
             response = self.client.chat.completions.create(
@@ -85,10 +85,10 @@ class DestinationParser:
                         4. **International trip** → Set origin_needs_clarification: true
 
                         **EXAMPLES:**
-                        - "Tokyo" (current_location: "Boston") → origin_city: "Boston", origin_needs_clarification: false
+                        - "Tokyo" (user_location: "Boston") → origin_city: "Boston", origin_needs_clarification: false
                         - "Bali from Singapore" → origin_city: "Singapore", origin_needs_clarification: false
                         - "Rome to Venice" (multi-city, no origin) → origin_city: null, origin_needs_clarification: true
-                        - "Paris" (no current_location) → origin_city: null, origin_needs_clarification: true
+                        - "Paris" (no user_location) → origin_city: null, origin_needs_clarification: true
                         - "New York to Boston" (domestic) → origin_city: "New York", origin_needs_clarification: false
 
                         **PATTERNS TO DETECT:**
@@ -115,7 +115,7 @@ class DestinationParser:
 
                         **With origin detection:**
                         - "Paris from Boston" → cities: ["Paris"], origin_city: "Boston"
-                        - "Italy" (current_location: "New York") → cities: ["Rome", "Florence"], origin_city: "New York"
+                        - "Italy" (user_location: "New York") → cities: ["Rome", "Florence"], origin_city: "New York"
 
                         Respond ONLY with valid JSON (no markdown):
                         {{
@@ -137,7 +137,7 @@ class DestinationParser:
                     },
                     {
                         "role": "user",
-                        "content": f"Parse this WORLDWIDE destination for a {duration}-day trip: {user_input}\n\nUser location: {current_location or 'Not provided'}"
+                        "content": f"Parse this WORLDWIDE destination for a {duration}-day trip: {user_input}\n\nUser location: {user_location or 'Not provided'}"
                     }
                 ],
                 temperature=0.1,
@@ -156,11 +156,11 @@ class DestinationParser:
             
             # ENHANCED: Handle origin detection
             if not result.get('origin_city'):
-                if current_location:
-                    result['origin_city'] = current_location
+                if user_location:
+                    result['origin_city'] = user_location
                     result['origin_needs_clarification'] = False
                     result['origin_detection_confidence'] = 'high'
-                    logger.info(f"✈️ Using provided user location as origin: {current_location}")
+                    logger.info(f"✈️ Using provided user location as origin: {user_location}")
                 else:
                     result['origin_city'] = None
                     result['origin_needs_clarification'] = True
@@ -228,9 +228,9 @@ class DestinationParser:
                 "is_multi_city": False,
                 "original_input": user_input,
                 "confidence": "low",
-                "origin_city": current_location,
-                "origin_needs_clarification": not bool(current_location),
-                "origin_detection_confidence": "high" if current_location else "low",
+                "origin_city": user_location,
+                "origin_needs_clarification": not bool(user_location),
+                "origin_detection_confidence": "high" if user_location else "low",
                 "error": str(e)
             }
     
@@ -415,7 +415,7 @@ class SmartDestinationManager:
         self, 
         user_input: str, 
         duration: int = 3,
-        current_location: Optional[str] = None
+        user_location: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Complete destination processing for ANY location worldwide with smart origin detection
@@ -423,12 +423,12 @@ class SmartDestinationManager:
         
         logger.info("=" * 80)
         logger.info(f"🎯 PROCESSING WORLDWIDE DESTINATION: '{user_input}' for {duration} days")
-        if current_location:
-            logger.info(f"👤 User location: {current_location}")
+        if user_location:
+            logger.info(f"👤 User location: {user_location}")
         logger.info("=" * 80)
         
         # Parse with LLM (handles worldwide destinations and origin detection)
-        parse_result = self.parser.parse_destination(user_input, duration, current_location)
+        parse_result = self.parser.parse_destination(user_input, duration, user_location)
         
         if not parse_result.get("success"):
             logger.warning(f"⚠️ Failed to parse destination, using input as single city")
@@ -439,8 +439,8 @@ class SmartDestinationManager:
                 "continent": "Unknown",
                 "is_country_only": False,
                 "is_multi_city": False,
-                "origin_city": current_location,
-                "origin_needs_clarification": not bool(current_location)
+                "origin_city": user_location,
+                "origin_needs_clarification": not bool(user_location)
             }
         
         # Get coordinates for each city using Google Geocoding
@@ -590,21 +590,21 @@ class SmartDestinationManager:
         except Exception:
             return "UTC"
     
-    def get_origin_iata(self, current_location: str) -> str:
+    def get_origin_iata(self, user_location: str) -> str:
         """
         Get IATA code for user's origin location
         
         ENHANCED: Handles any city name worldwide
         """
-        if not current_location:
+        if not user_location:
             logger.warning("⚠️ No user location provided, using default: JFK")
             return "JFK"
         
-        logger.info(f"✈️ Getting IATA for origin: {current_location}")
-        iata = self.parser.get_iata_code(current_location, "")
+        logger.info(f"✈️ Getting IATA for origin: {user_location}")
+        iata = self.parser.get_iata_code(user_location, "")
         
         if iata == "UNK":
-            logger.warning(f"⚠️ Could not find IATA for {current_location}, using default: JFK")
+            logger.warning(f"⚠️ Could not find IATA for {user_location}, using default: JFK")
             return "JFK"
         
         return iata

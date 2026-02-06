@@ -229,7 +229,7 @@ class DemoDataManager:
         self,
         destination: str,
         duration: int = 3,
-        current_location: Optional[str] = None  
+        user_location: Optional[str] = None  
     ) -> Dict[str, Any]:
         """Get destination information with multi-city support"""
         if not self.google_api_key:
@@ -237,14 +237,14 @@ class DemoDataManager:
         
         if self.smart_parser:
             logger.info(f"🤖 Using smart parser for: '{destination}' ({duration} days)")
-            if current_location:  # ← ADDED THIS LOG
-                logger.info(f"👤 User location: {current_location}")
+            if user_location:  # ← ADDED THIS LOG
+                logger.info(f"👤 User location: {user_location}")
             
-            # ← CHANGED THIS LINE - added current_location parameter
+            # ← CHANGED THIS LINE - added user_location parameter
             result = self.smart_parser.process_destination(
                 destination, 
                 duration,
-                current_location=current_location
+                user_location=user_location
             )
             
             if result.get("success"):
@@ -327,21 +327,21 @@ class DemoDataManager:
     def fetch_location_based_data(
         self,
         destination: str,
-        current_location: Optional[str] = None,
+        user_location: Optional[str] = None,
         include_flights: bool = True,
         duration: int = 3
     ) -> Dict[str, Any]:
         logger.info("=" * 80)
         logger.info(f"🌍 FETCHING DATA FOR: {destination} ({duration} days)")
-        if current_location:  
-            logger.info(f"📍 User Location: {current_location}")
+        if user_location:  
+            logger.info(f"📍 User Location: {user_location}")
         logger.info("=" * 80)
         
-        dest_info = self.get_destination_info(destination, duration, current_location)
+        dest_info = self.get_destination_info(destination, duration, user_location)
         
         if not dest_info.get("success"):
             logger.warning("⚠️ Destination parsing failed, using fallback")
-            return self._get_fallback_location_data(destination, current_location, include_flights)
+            return self._get_fallback_location_data(destination, user_location, include_flights)
         
         num_cities = len(dest_info.get("cities", [1]))
         data_limits = self._calculate_data_limits(duration, num_cities)
@@ -415,7 +415,7 @@ class DemoDataManager:
         # Fetch flights
         flights_data = None
         if include_flights:
-            flights_data = self._fetch_flights(dest_info, current_location, duration)
+            flights_data = self._fetch_flights(dest_info, user_location, duration)
             logger.info(f"✅ Flights: {len(flights_data) if flights_data else 0} options")
         
         # Get transport info with DYNAMIC pricing
@@ -811,7 +811,7 @@ class DemoDataManager:
     def _fetch_flights(
         self,
         dest_info: Dict[str, Any],
-        current_location: str,
+        user_location: str,
         duration: int
     ) -> List[Dict[str, Any]]:
         """
@@ -825,9 +825,9 @@ class DemoDataManager:
             # STEP 1: Get origin
             origin_city = dest_info.get('origin_city')
             
-            if not origin_city and current_location:
-                origin_city = current_location
-                logger.info(f"📍 Using user location as origin: {current_location}")
+            if not origin_city and user_location:
+                origin_city = user_location
+                logger.info(f"📍 Using user location as origin: {user_location}")
             
             if not origin_city:
                 logger.warning("⚠️ No flight origin available - cannot fetch flights")
@@ -1116,7 +1116,7 @@ class DemoDataManager:
     def _get_fallback_location_data(
         self,
         destination: str,
-        current_location: str,
+        user_location: str,
         include_flights: bool
     ) -> Dict[str, Any]:
         """Complete fallback data"""

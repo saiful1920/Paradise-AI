@@ -129,7 +129,7 @@ class ItineraryRequest(BaseModel):
     include_hotels: bool = Field(default=False, description="Include hotel costs")
     duration: int = Field(..., ge=1, le=30, description="Trip duration in days")
     travelers: int = Field(..., ge=1, le=20, description="Number of travelers")
-    current_location: Optional[str] = Field(default="New York", description="User's departure city")
+    user_location: Optional[str] = Field(default="New York", description="User's departure city")
 
 
 class BudgetReallocationRequest(BaseModel):
@@ -245,13 +245,13 @@ async def create_itinerary(request: ItineraryRequest):
         logger.info(f"✈️ Include Flights: {request.include_flights}")
         logger.info(f"🏨 Include Hotels: {request.include_hotels}")
         logger.info(f"🎯 Activity Level: {request.activity_preference}")
-        logger.info(f"📍 User Location: {request.current_location}")
+        logger.info(f"📍 User Location: {request.user_location}")
         logger.info("=" * 80)
         
         # Validate budget
         logger.info("\n💵 Validating budget...")
         validation = await itinerary_service.validate_budget(
-            current_location=request.current_location,
+            user_location=request.user_location,
             destination=request.destination,
             budget=request.budget,
             duration=request.duration,
@@ -278,7 +278,7 @@ async def create_itinerary(request: ItineraryRequest):
         # Generate itinerary
         logger.info("\n🎨 Generating itinerary...")
         itinerary = await itinerary_service.generate_itinerary(
-            current_location=request.current_location,
+            user_location=request.user_location,
             destination=request.destination,
             budget=request.budget,
             duration=request.duration,

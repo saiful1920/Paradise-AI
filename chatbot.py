@@ -829,7 +829,7 @@ Return ONLY the sentence, no preamble or quotes."""
                     "activity_preference": current_itinerary.get('activity_preference', 'moderate'),
                     "include_flights": current_itinerary.get('include_flights', True),
                     "include_hotels": current_itinerary.get('include_hotels', True),
-                    "current_location": current_itinerary.get('current_location')
+                    "user_location": current_itinerary.get('user_location')
                 },
                 "success": True,
                 "message": "Full regeneration required"

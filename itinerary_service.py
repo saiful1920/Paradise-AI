@@ -56,13 +56,13 @@ class ItineraryService:
         travelers: int,
         include_flights: bool,
         include_hotels: bool,
-        current_location: Optional[str] = None  # ← ADDED THIS PARAMETER
+        user_location: Optional[str] = None  # ← ADDED THIS PARAMETER
     ) -> Dict[str, Any]:
         """Validate if budget is sufficient using real API data"""
         
         location_data = self.demo_data.fetch_location_based_data(
             destination, 
-            current_location,  
+            user_location,  
             include_flights, 
             duration
         )
@@ -177,7 +177,7 @@ class ItineraryService:
         activity_preference: str,
         include_flights: bool,
         include_hotels: bool,
-        current_location: Optional[str] = None
+        user_location: Optional[str] = None
     ) -> Dict[str, Any]:
         """Generate complete itinerary with PERFECT budget calculation"""
         
@@ -189,7 +189,7 @@ class ItineraryService:
         
         # Fetch location data
         location_data = self.demo_data.fetch_location_based_data(
-            destination, current_location, include_flights, duration
+            destination, user_location, include_flights, duration
         )
         
         dest_info = location_data["destination_info"]
@@ -238,7 +238,7 @@ class ItineraryService:
         updated_flights = None
         if include_flights and location_data.get("flights"):
             updated_flights = self._update_flight_dates(
-                location_data["flights"], departure_date, return_date, current_location, cities[0]
+                location_data["flights"], departure_date, return_date, user_location, cities[0]
             )
         
         # Format destination
@@ -1395,7 +1395,7 @@ class ItineraryService:
         flights: List[Dict],
         departure_date: datetime,
         return_date: datetime,
-        current_location: Optional[str],
+        user_location: Optional[str],
         destination: str
     ) -> List[Dict[str, Any]]:
         """
@@ -1532,11 +1532,11 @@ class ItineraryService:
         
         # Recreate location_data
         destination = current_itinerary["destination"]["name"]
-        current_location = None  
+        user_location = None  
         include_flights = current_itinerary.get("include_flights", True)
         
         location_data = self.demo_data.fetch_location_based_data(
-            destination, current_location, include_flights, duration
+            destination, user_location, include_flights, duration
         )
         
         # Recreate selected_activities from daily activities

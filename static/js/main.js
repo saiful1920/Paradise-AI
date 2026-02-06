@@ -170,7 +170,7 @@ form.addEventListener('submit', async (e) => {
         include_hotels: includeHotels,
         duration,
         travelers,
-        current_location: userLocation
+        user_location: userLocation
     };
     
     console.log('📤 Request payload:', requestData);
