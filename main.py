@@ -148,14 +148,6 @@ class VideoGenerationRequest(BaseModel):
     user_photo_filename: str
 
 
-class DayModificationRequest(BaseModel):
-    """Request to modify a specific day's activity"""
-    itinerary_id: str
-    day: int = Field(..., ge=1, description="Day number to modify")
-    slot: str = Field(..., description="Slot to modify: morning, afternoon, evening, lunch, dinner")
-    new_activity: Dict[str, Any] = Field(..., description="New activity details")
-
-
 # =============================================================================
 # API Endpoints
 # =============================================================================
@@ -290,7 +282,12 @@ async def create_itinerary(request: ItineraryRequest):
         
         # Store itinerary
         itinerary_id = str(uuid.uuid4())
+        itinerary["itinerary_id"] = itinerary_id
+        itinerary["user_location"] = request.user_location  # Store for chatbot context
         active_itineraries[itinerary_id] = itinerary
+        
+        # Initialize chatbot context for this itinerary
+        itinerary_service.chatbot.update_context(itinerary_id, itinerary)
         
         logger.info(f"\n✅ Itinerary created successfully!")
         logger.info(f"🆔 Itinerary ID: {itinerary_id}")
@@ -404,6 +401,9 @@ async def reallocate_budget(request: BudgetReallocationRequest):
         
         # Update stored itinerary
         active_itineraries[request.itinerary_id]["budget_breakdown"] = updated_budget
+
+         # Update chatbot context
+        itinerary_service.chatbot.update_context(request.itinerary_id, active_itineraries[request.itinerary_id])
         
         logger.info("✅ Budget reallocated successfully")
         
@@ -419,26 +419,42 @@ async def reallocate_budget(request: BudgetReallocationRequest):
 
 @app.post("/api/chat")
 async def chat_with_ai(request: ChatMessage):
-    """Chat endpoint - with intelligent bot"""
+    """
+    FIXED: Chat endpoint with backend conversation storage
+    """
     try:
         logger.info(f"💬 Chat message from {request.itinerary_id}")
+        logger.info(f"📝 Message: {request.message}")
         
         if request.itinerary_id not in active_itineraries:
             raise HTTPException(status_code=404, detail="Itinerary not found")
         
         current_itinerary = active_itineraries[request.itinerary_id]
         
+        # Get conversation history from BACKEND (not frontend)
+        history = itinerary_service.chatbot.get_conversation_history(request.itinerary_id)
+        logger.info(f"📚 Backend conversation history: {len(history)} messages")
+        
+        # Process message with backend storage
         response = await itinerary_service.process_chat_message(
             message=request.message,
             current_itinerary=current_itinerary,
-            conversation_history=request.conversation_history or []
+            conversation_history=None  # Ignored, uses backend storage
         )
         
         # Update itinerary if modified
         if response.get("modifications_made") and response.get("updated_itinerary"):
             active_itineraries[request.itinerary_id] = response["updated_itinerary"]
+            
+            # Update chatbot context
+            itinerary_service.chatbot.update_context(
+                request.itinerary_id, 
+                response["updated_itinerary"]
+            )
+            
             logger.info("✅ Itinerary updated from chat")
         
+        # Return response with backend conversation history
         return {
             "response": response.get("response", ""),
             "modifications_made": response.get("modifications_made", False),
@@ -446,12 +462,32 @@ async def chat_with_ai(request: ChatMessage):
             "requires_confirmation": response.get("requires_confirmation", False),
             "proposed_changes": response.get("proposed_changes", {}),
             "modification_type": response.get("modification_type", "none"),
-            "confidence": response.get("confidence", 0.0)
+            "confidence": response.get("confidence", 0.0),
+            # Return backend history for frontend display
+            "conversation_history": itinerary_service.chatbot.get_conversation_history(request.itinerary_id)
         }
         
     except Exception as e:
         logger.error(f"❌ Error: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/chat-history/{itinerary_id}")
+async def get_chat_history(itinerary_id: str):
+    """
+    NEW: Get conversation history from backend
+    """
+    if itinerary_id not in active_itineraries:
+        raise HTTPException(status_code=404, detail="Itinerary not found")
+    
+    history = itinerary_service.chatbot.get_conversation_history(itinerary_id)
+    
+    return {
+        "itinerary_id": itinerary_id,
+        "conversation_history": history,
+        "message_count": len(history)
+    }
 
 
 @app.get("/api/health")

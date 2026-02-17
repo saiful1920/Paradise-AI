@@ -1,14 +1,13 @@
 """
-ENHANCED Intelligent Chatbot Service for Itinerary Management
+FIXED & ENHANCED Intelligent Chatbot Service for Itinerary Management
 
-NEW FEATURES:
-- Handles ANY user question intelligently
-- Fetches REAL data from Google Places API for modifications
-- Can modify single or multiple days with real locations
-- Can change destinations with full regeneration
-- Updates descriptions, images, and budget with real data
-- Tracks conversation context properly
-- Handles diverse intents (questions, modifications, full changes)
+IMPROVEMENTS:
+- Backend conversation history storage (per itinerary_id)
+- Real functionality using existing itinerary_service methods
+- Proper context retention across messages
+- Better intent detection with structured prompts
+- Memory of user preferences and itinerary state
+- Leverages Google Places API for real data
 """
 
 import json
@@ -18,92 +17,142 @@ from langchain_openai import ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage
 import re
 import requests
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class ChatbotService:
-    """ENHANCED intelligent chatbot for itinerary management with real data integration"""
+    """FIXED intelligent chatbot with backend conversation storage and real functionality"""
     
-    def __init__(self, api_key: str, google_api_key: str = None):
+    def __init__(self, api_key: str, google_api_key: str = None, demo_data_manager = None):
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0.3,
             openai_api_key=api_key
         )
         self.google_api_key = google_api_key
-        self.conversation_memory = {}
+        
+        # BACKEND CONVERSATION STORAGE - per itinerary_id
+        self.conversation_history = {}  # {itinerary_id: [{role, content, timestamp}]}
+        self.itinerary_context = {}  # {itinerary_id: {current_state, preferences}}
+        
         self.places_base_url = "https://maps.googleapis.com/maps/api/place"
+        
+        # NEW: Reference to demo_data_manager for using existing methods
+        self.demo_data_manager = demo_data_manager
+        
+        # NEW: Will be set by itinerary_service to avoid circular dependency
+        self.itinerary_service = None
+    
+    def set_itinerary_service(self, itinerary_service):
+        """Set reference to itinerary_service to use existing methods"""
+        self.itinerary_service = itinerary_service
+        logger.info("✅ Chatbot linked to itinerary_service")
+    
+    def get_conversation_history(self, itinerary_id: str) -> List[Dict[str, str]]:
+        """Get conversation history for an itinerary (BACKEND STORAGE)"""
+        return self.conversation_history.get(itinerary_id, [])
+    
+    def add_to_history(self, itinerary_id: str, role: str, content: str):
+        """Add message to backend conversation history"""
+        if itinerary_id not in self.conversation_history:
+            self.conversation_history[itinerary_id] = []
+        
+        self.conversation_history[itinerary_id].append({
+            "role": role,
+            "content": content,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Keep only last 20 messages to prevent memory bloat
+        if len(self.conversation_history[itinerary_id]) > 20:
+            self.conversation_history[itinerary_id] = self.conversation_history[itinerary_id][-20:]
+    
+    def update_context(self, itinerary_id: str, current_itinerary: Dict[str, Any]):
+        """Update stored context for an itinerary"""
+        self.itinerary_context[itinerary_id] = {
+            "destination": current_itinerary.get("destination", {}).get("name", "Unknown"),
+            "budget": current_itinerary.get("total_budget", 0),
+            "duration": current_itinerary.get("duration", 0),
+            "travelers": current_itinerary.get("travelers", 1),
+            "activity_preference": current_itinerary.get("activity_preference", "moderate"),
+            "cities": current_itinerary.get("destination", {}).get("cities", []),
+            "include_flights": current_itinerary.get("include_flights", False),
+            "include_hotels": current_itinerary.get("include_hotels", False),
+            "last_updated": datetime.now().isoformat()
+        }
     
     async def process_message(
         self,
         itinerary_id: str,
         message: str,
         current_itinerary: Dict[str, Any],
-        conversation_history: List[Dict[str, str]]
+        conversation_history: Optional[List[Dict[str, str]]] = None  # Ignored, use backend
     ) -> Dict[str, Any]:
         """
-        ENHANCED: Process user message with intelligent intent detection and real data
+        FIXED: Process user message with backend conversation storage
         """
         
-        logger.info(f"💬 Processing message: {message[:100]}...")
+        logger.info(f"💬 Processing message for {itinerary_id}: {message[:100]}...")
+        
+        # Update context
+        self.update_context(itinerary_id, current_itinerary)
+        
+        # Add user message to BACKEND history
+        self.add_to_history(itinerary_id, "user", message)
+        
+        # Get backend conversation history
+        history = self.get_conversation_history(itinerary_id)
         
         # Build comprehensive context
-        context = self._build_enhanced_context(current_itinerary, conversation_history)
+        context = self._build_enhanced_context(current_itinerary, history)
         
         # Detect intent with enhanced categories
         intent_result = await self._detect_intent_enhanced(message, context, current_itinerary)
         
         logger.info(f"🎯 Detected intent: {intent_result['intent']} (confidence: {intent_result['confidence']})")
         
-        # Handle based on intent
-        if intent_result['intent'] == 'general_question':
-            return await self._handle_general_question(message, context, current_itinerary)
+        # Route to appropriate handler
+        response_data = await self._route_intent(
+            intent_result, message, context, current_itinerary
+        )
         
-        elif intent_result['intent'] == 'travel_advice':
-            return await self._handle_travel_advice(message, context, current_itinerary)
+        # Add bot response to BACKEND history
+        self.add_to_history(itinerary_id, "assistant", response_data.get("response", ""))
         
-        elif intent_result['intent'] == 'modify_day':
-            return await self._handle_day_modification_with_real_data(
-                message, context, current_itinerary, intent_result.get('extracted_info', {})
-            )
+        return response_data
+    
+    async def _route_intent(
+        self,
+        intent_result: Dict[str, Any],
+        message: str,
+        context: str,
+        current_itinerary: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Route to appropriate handler based on intent"""
         
-        elif intent_result['intent'] == 'modify_multiple_days':
-            return await self._handle_multiple_days_modification(
-                message, context, current_itinerary, intent_result.get('extracted_info', {})
-            )
+        intent = intent_result['intent']
+        extracted_info = intent_result.get('extracted_info', {})
         
-        elif intent_result['intent'] == 'add_activity':
-            return await self._handle_add_activity(
-                message, context, current_itinerary, intent_result.get('extracted_info', {})
-            )
+        # Map intents to handlers
+        handlers = {
+            'general_question': self._handle_general_question,
+            'travel_advice': self._handle_travel_advice,
+            'modify_day': self._handle_day_modification_with_real_data,
+            'modify_multiple_days': self._handle_multiple_days_modification,
+            'add_activity': self._handle_add_activity,
+            'swap_activities': self._handle_swap_activities,
+            'add_day': self._handle_add_day,
+            'change_destination': self._handle_destination_change,
+            'adjust_budget': self._handle_budget_adjustment,
+            'full_regenerate': self._handle_full_regeneration,
+        }
         
-        elif intent_result['intent'] == 'swap_activities':
-            return await self._handle_swap_activities(
-                message, context, current_itinerary, intent_result.get('extracted_info', {})
-            )
+        handler = handlers.get(intent, self._handle_clarification_needed)
         
-        elif intent_result['intent'] == 'add_day':
-            return await self._handle_add_day(message, context, current_itinerary)
-        
-        elif intent_result['intent'] == 'change_destination':
-            return await self._handle_destination_change(message, context, current_itinerary)
-        
-        elif intent_result['intent'] == 'adjust_budget':
-            return await self._handle_budget_adjustment(message, context, current_itinerary)
-        
-        elif intent_result['intent'] == 'full_regenerate':
-            return await self._handle_full_regeneration(message, context, current_itinerary)
-        
-        else:
-            return {
-                "response": "I understand you want to make changes. Could you clarify what you'd like to modify? For example:\n• Ask questions about travel advice\n• Modify specific days\n• Change destination\n• Adjust budget",
-                "intent": "clarification_needed",
-                "requires_confirmation": False,
-                "modifications": {},
-                "confidence": 0.0
-            }
+        return await handler(message, context, current_itinerary, extracted_info)
     
     def _build_enhanced_context(
         self,
@@ -123,6 +172,8 @@ Duration: {current_itinerary.get('duration', 0)} days
 Budget: ${current_itinerary.get('total_budget', 0):,.2f}
 Travelers: {current_itinerary.get('travelers', 1)}
 Activity Level: {current_itinerary.get('activity_preference', 'moderate')}
+Flights Included: {current_itinerary.get('include_flights', False)}
+Hotels Included: {current_itinerary.get('include_hotels', False)}
 
 DAILY SCHEDULE (CURRENT):
 """
@@ -155,7 +206,7 @@ DAILY SCHEDULE (CURRENT):
         current_itinerary: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        ENHANCED: Detect diverse intents including questions and modifications
+        ENHANCED: Detect diverse intents with better extraction
         """
         
         prompt = f"""Analyze this user message and determine their intent.
@@ -166,36 +217,37 @@ CONTEXT:
 {context}
 
 INTENT TYPES:
-1. general_question - Questions about current itinerary details (e.g., "what am I doing on day 3?", "where am I staying?")
+1. general_question - Questions about current itinerary details (e.g., "what am I doing on day 3?", "where am I staying?", "what's my budget?")
 2. travel_advice - Questions seeking travel advice/recommendations (e.g., "what should I pack?", "best restaurants?", "is 3 days enough?")
-3. modify_day - Change specific day's activity (e.g., "change day 3 afternoon to Eiffel Tower")
+3. modify_day - Change specific day's activity (e.g., "change day 3 afternoon to Eiffel Tower", "replace day 2 morning with Louvre")
 4. modify_multiple_days - Change multiple days at once (e.g., "change days 2 and 3 to museums")
 5. add_activity - Add activity without removing existing (e.g., "add Louvre to day 2")
 6. swap_activities - Swap activities between days (e.g., "swap day 1 and day 3 activities")
-7. add_day - Add more days to trip
-8. change_destination - Visit different cities/destinations
-9. adjust_budget - Increase/decrease budget
-10. full_regenerate - Completely new itinerary
+7. add_day - Add more days to trip (e.g., "extend to 7 days", "add 2 more days")
+8. change_destination - Visit different cities/destinations (e.g., "change destination to Paris", "visit Rome instead")
+9. adjust_budget - Increase/decrease budget (e.g., "increase budget to $5000", "reduce by $500")
+10. full_regenerate - Completely new itinerary (e.g., "start over", "regenerate everything")
 
-EXTRACTION GUIDELINES:
-- day_number: Extract ALL day numbers mentioned (can be list)
-- slot: morning/afternoon/evening
-- new_location_name: Extract specific place/attraction name
-- multiple_days: true if modifying 2+ days
-- swap_days: [day1, day2] if swapping
+EXTRACTION RULES:
+- Extract ALL mentioned day numbers (can be list: [1, 2, 3])
+- Extract slot: morning/afternoon/evening
+- Extract location name if mentioned
+- Extract budget amounts if mentioned
+- Extract duration changes if mentioned
 
 Return ONLY valid JSON:
 {{
     "intent": "intent_type",
     "confidence": 0.0-1.0,
     "extracted_info": {{
-        "day_number": null or [1, 2, 3],
+        "day_number": null or number or [1, 2, 3],
         "slot": null or "morning/afternoon/evening",
         "new_location_name": null or string,
         "multiple_days": true/false,
         "swap_days": null or [1, 3],
         "new_destination": null or string,
-        "budget_change": null or number
+        "budget_change": null or number,
+        "duration_change": null or number
     }}
 }}"""
         
@@ -224,11 +276,16 @@ Return ONLY valid JSON:
                 "extracted_info": {}
             }
     
+    # ========================================================================
+    # INTENT HANDLERS - WITH REAL FUNCTIONALITY
+    # ========================================================================
+    
     async def _handle_general_question(
         self,
         message: str,
         context: str,
-        current_itinerary: Dict[str, Any]
+        current_itinerary: Dict[str, Any],
+        extracted_info: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Handle questions about current itinerary details
@@ -242,7 +299,7 @@ ITINERARY CONTEXT:
 USER QUESTION: "{message}"
 
 Provide a clear, specific answer (2-4 sentences). Reference their actual itinerary details.
-Be conversational and helpful."""
+Be conversational and helpful. Use specific numbers, names, and details from the context."""
         
         try:
             messages = [
@@ -275,7 +332,8 @@ Be conversational and helpful."""
         self,
         message: str,
         context: str,
-        current_itinerary: Dict[str, Any]
+        current_itinerary: Dict[str, Any],
+        extracted_info: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Handle travel advice questions (packing, restaurants, tips, etc.)
@@ -291,11 +349,12 @@ TRIP DETAILS:
 - Destination: {', '.join(cities)}, {destination.get('country', 'Unknown')}
 - Duration: {duration} days
 - Travelers: {current_itinerary.get('travelers', 1)}
+- Budget: ${current_itinerary.get('total_budget', 0):,.2f}
 
 USER QUESTION: "{message}"
 
 Provide practical, actionable travel advice (3-5 sentences). Be specific to their destination and trip length.
-Include insider tips when relevant."""
+Include insider tips when relevant. Be helpful and encouraging."""
         
         try:
             messages = [
@@ -332,7 +391,7 @@ Include insider tips when relevant."""
         extracted_info: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        ENHANCED: Handle day modifications with REAL Google Places API data
+        FIXED: Handle day modifications with REAL Google Places API data
         """
         
         logger.info(f"🔄 Handling day modification with real data")
@@ -342,14 +401,11 @@ Include insider tips when relevant."""
         slot = extracted_info.get('slot')
         new_location_name = extracted_info.get('new_location_name')
         
-        # Enhanced extraction from message
+        # Enhanced extraction from message if missing
         if not day_number:
             day_matches = re.findall(r'day[s]?\s+(\d+)', message.lower())
             if day_matches:
-                day_number = [int(d) for d in day_matches]
-        
-        if isinstance(day_number, list):
-            day_number = day_number[0] if len(day_number) == 1 else day_number
+                day_number = int(day_matches[0])
         
         if not slot:
             slot_keywords = {
@@ -363,6 +419,7 @@ Include insider tips when relevant."""
                     break
         
         if not new_location_name:
+            # Better location extraction
             patterns = [
                 r'(?:to|visit|see|explore|go to|add|change to|replace with)\s+(?:the\s+)?([A-Z][a-zA-Z\s\-\']+(?:Tower|Museum|Park|Palace|Cathedral|Temple|Beach|Market|Square|Garden|Bridge|Castle|Wall|Hill|Island|Street|Avenue|Building|Center|Centre|Church|Mosque|Shrine|Fort|Monument|Gallery|Theater|Theatre|Stadium|Arena|Zoo|Aquarium|Library|Plaza|Quarter|District|Bay|Lake|Mountain|Falls|Canyon|Valley|Restaurant|Cafe|Bar))',
                 r'(?:to|visit|see|explore|go to|add|change to|replace with)\s+the\s+([A-Z][a-zA-Z\s\-\']+)',
@@ -388,13 +445,11 @@ Include insider tips when relevant."""
         # Get destination city for search
         destination_info = current_itinerary.get('destination', {})
         destination = destination_info.get('name', 'Unknown')
-        country = destination_info.get('country', 'Unknown')
         
         # Get city for specific day if multi-city trip
-        if isinstance(day_number, int):
-            day_data = next((d for d in current_itinerary.get('daily_activities', []) if d.get('day') == day_number), None)
-            if day_data and day_data.get('city'):
-                destination = day_data['city']
+        day_data = next((d for d in current_itinerary.get('daily_activities', []) if d.get('day') == day_number), None)
+        if day_data and day_data.get('city'):
+            destination = day_data['city']
         
         # Fetch REAL data from Google Places API
         logger.info(f"🔍 Fetching real data for: {new_location_name} in {destination}")
@@ -418,10 +473,8 @@ Include insider tips when relevant."""
         
         # Calculate budget impact
         old_cost = 0
-        if isinstance(day_number, int):
-            day_data = next((d for d in current_itinerary.get('daily_activities', []) if d.get('day') == day_number), None)
-            if day_data and slot in day_data:
-                old_cost = day_data[slot].get('cost', 0)
+        if day_data and slot in day_data:
+            old_cost = day_data[slot].get('cost', 0)
         
         new_cost = place_data.get('estimated_cost', 0) * current_itinerary.get('travelers', 1)
         budget_impact = new_cost - old_cost
@@ -446,7 +499,7 @@ Include insider tips when relevant."""
             "intent": "modify_day",
             "requires_confirmation": True,
             "modifications": {
-                "day": day_number if isinstance(day_number, int) else day_number[0],
+                "day": day_number,
                 "slot": slot,
                 "new_activity_name": place_data['name'],
                 "new_activity_description": description,
@@ -472,8 +525,6 @@ Include insider tips when relevant."""
         """
         
         day_numbers = extracted_info.get('day_number', [])
-        slot = extracted_info.get('slot')
-        new_location_name = extracted_info.get('new_location_name')
         
         # Extract days if not in extracted_info
         if not day_numbers or not isinstance(day_numbers, list):
@@ -490,7 +541,7 @@ Include insider tips when relevant."""
                 "confidence": 0.0
             }
         
-        # For now, suggest doing them one at a time
+        # Suggest doing them one at a time for accuracy
         return {
             "response": f"I can help modify days {', '.join(map(str, day_numbers))}. To ensure I get the details right, let's do them one at a time. Which day would you like to start with?",
             "intent": "clarification_needed",
@@ -507,7 +558,7 @@ Include insider tips when relevant."""
         extracted_info: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Add activity to existing schedule without removing
+        Add activity to existing schedule
         """
         
         return {
@@ -552,7 +603,8 @@ Include insider tips when relevant."""
         self,
         message: str,
         context: str,
-        current_itinerary: Dict[str, Any]
+        current_itinerary: Dict[str, Any],
+        extracted_info: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Add days to itinerary (requires full regeneration)
@@ -561,10 +613,21 @@ Include insider tips when relevant."""
         current_duration = current_itinerary.get('duration', 0)
         
         # Extract number of days to add
-        add_matches = re.findall(r'add\s+(\d+)', message.lower())
-        days_to_add = int(add_matches[0]) if add_matches else 1
+        duration_change = extracted_info.get('duration_change')
         
-        new_duration = current_duration + days_to_add
+        if not duration_change:
+            add_matches = re.findall(r'add\s+(\d+)', message.lower())
+            if add_matches:
+                duration_change = int(add_matches[0])
+            else:
+                extend_matches = re.findall(r'extend\s+to\s+(\d+)', message.lower())
+                if extend_matches:
+                    new_total = int(extend_matches[0])
+                    duration_change = new_total - current_duration
+                else:
+                    duration_change = 1
+        
+        new_duration = current_duration + duration_change
         
         return {
             "response": f"I can extend your trip from **{current_duration} days** to **{new_duration} days**. This will require regenerating the entire itinerary to properly distribute activities.\n\nWould you like to proceed with this change?",
@@ -581,14 +644,18 @@ Include insider tips when relevant."""
         self,
         message: str,
         context: str,
-        current_itinerary: Dict[str, Any]
+        current_itinerary: Dict[str, Any],
+        extracted_info: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Handle destination changes (requires full regeneration)
         """
         
-        # Extract new destination from message
-        prompt = f"""Extract the new destination the user wants to visit.
+        new_destination = extracted_info.get('new_destination')
+        
+        # Extract new destination from message if not found
+        if not new_destination:
+            prompt = f"""Extract the new destination the user wants to visit.
 
 USER MESSAGE: "{message}"
 
@@ -596,55 +663,68 @@ CURRENT DESTINATION: {current_itinerary.get('destination', {}).get('name', 'Unkn
 
 Return ONLY the destination name as plain text (e.g., "Tokyo", "Paris, France", "Italy").
 No JSON, no explanation, just the destination."""
+            
+            try:
+                messages = [
+                    SystemMessage(content="Extract destination name only. Return just the destination, nothing else."),
+                    HumanMessage(content=prompt)
+                ]
+                
+                response = await self.llm.ainvoke(messages)
+                new_destination = response.content.strip().strip('"').strip("'")
+                
+            except Exception as e:
+                logger.error(f"❌ Error extracting destination: {e}")
+                return {
+                    "response": "Where would you like to go instead? Please specify the city or country.",
+                    "intent": "clarification_needed",
+                    "requires_confirmation": False,
+                    "modifications": {},
+                    "confidence": 0.0
+                }
         
-        try:
-            messages = [
-                SystemMessage(content="Extract destination name only. Return just the destination, nothing else."),
-                HumanMessage(content=prompt)
-            ]
-            
-            response = await self.llm.ainvoke(messages)
-            new_destination = response.content.strip().strip('"').strip("'")
-            
-            current_dest = current_itinerary.get('destination', {}).get('name', 'Unknown')
-            
-            return {
-                "response": f"I can change your destination from **{current_dest}** to **{new_destination}**.\n\nThis will:\n• Generate a completely new itinerary\n• Fetch real attractions and activities from {new_destination}\n• Recalculate budget based on local costs\n• Find flights and hotels\n\nWould you like to proceed?",
-                "intent": "change_destination",
-                "requires_confirmation": True,
-                "modifications": {
-                    "destination": new_destination,
-                    "regenerate_required": True
-                },
-                "confidence": 0.85
-            }
-            
-        except Exception as e:
-            logger.error(f"❌ Error extracting destination: {e}")
-            return {
-                "response": "Where would you like to go instead? Please specify the city or country.",
-                "intent": "clarification_needed",
-                "requires_confirmation": False,
-                "modifications": {},
-                "confidence": 0.0
-            }
+        current_dest = current_itinerary.get('destination', {}).get('name', 'Unknown')
+        
+        return {
+            "response": f"I can change your destination from **{current_dest}** to **{new_destination}**.\n\nThis will:\n• Generate a completely new itinerary\n• Fetch real attractions and activities from {new_destination}\n• Recalculate budget based on local costs\n• Find flights and hotels\n\nWould you like to proceed?",
+            "intent": "change_destination",
+            "requires_confirmation": True,
+            "modifications": {
+                "destination": new_destination,
+                "regenerate_required": True
+            },
+            "confidence": 0.85
+        }
     
     async def _handle_budget_adjustment(
         self,
         message: str,
         context: str,
-        current_itinerary: Dict[str, Any]
+        current_itinerary: Dict[str, Any],
+        extracted_info: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Handle budget changes (requires full regeneration)
         """
         
-        # Extract new budget
-        numbers = re.findall(r'\d+(?:,\d{3})*(?:\.\d{2})?', message.replace('$', ''))
+        budget_change = extracted_info.get('budget_change')
         
-        if numbers:
-            new_budget = float(numbers[0].replace(',', ''))
+        # Extract new budget if not found
+        if not budget_change:
+            numbers = re.findall(r'\d+(?:,\d{3})*(?:\.\d{2})?', message.replace('$', ''))
+            if numbers:
+                budget_change = float(numbers[0].replace(',', ''))
+        
+        if budget_change:
             current_budget = current_itinerary.get('total_budget', 0)
+            
+            # Determine if it's an increase or new total
+            if 'increase' in message.lower() or 'add' in message.lower():
+                new_budget = current_budget + budget_change
+            elif 'decrease' in message.lower() or 'reduce' in message.lower():
+                new_budget = current_budget - budget_change
+            else:
+                new_budget = budget_change
             
             change = new_budget - current_budget
             change_text = f"increase by ${abs(change):,.2f}" if change > 0 else f"decrease by ${abs(change):,.2f}"
@@ -673,7 +753,8 @@ No JSON, no explanation, just the destination."""
         self,
         message: str,
         context: str,
-        current_itinerary: Dict[str, Any]
+        current_itinerary: Dict[str, Any],
+        extracted_info: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Handle full itinerary regeneration
@@ -690,17 +771,52 @@ No JSON, no explanation, just the destination."""
             "confidence": 0.95
         }
     
+    async def _handle_clarification_needed(
+        self,
+        message: str,
+        context: str,
+        current_itinerary: Dict[str, Any],
+        extracted_info: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Handle cases where clarification is needed
+        """
+        
+        return {
+            "response": "I understand you want to make changes. Could you clarify what you'd like to modify? For example:\n• Ask questions about travel advice\n• Modify specific days (e.g., 'change day 3 afternoon to Eiffel Tower')\n• Change destination\n• Adjust budget",
+            "intent": "clarification_needed",
+            "requires_confirmation": False,
+            "modifications": {},
+            "confidence": 0.0
+        }
+    
+    # ========================================================================
+    # GOOGLE PLACES API INTEGRATION
+    # ========================================================================
+    
     async def _fetch_place_from_google(
         self,
         place_name: str,
         destination: str
     ) -> Optional[Dict[str, Any]]:
         """
-        Fetch REAL place data from Google Places API
-        
-        Returns place with: name, rating, photo_url, address, estimated_cost
+        Fetch REAL place data - USES EXISTING demo_data_manager if available
         """
         
+        # NEW: Use existing demo_data_manager method if available
+        if self.demo_data_manager and hasattr(self.demo_data_manager, 'fetch_place_details'):
+            try:
+                logger.info(f"🔍 Using demo_data_manager to fetch: {place_name} in {destination}")
+                place_data = self.demo_data_manager.fetch_place_details(
+                    place_name, 
+                    destination
+                )
+                if place_data:
+                    return place_data
+            except Exception as e:
+                logger.warning(f"⚠️ demo_data_manager fetch failed, falling back to direct API: {e}")
+        
+        # Fallback to direct Google Places API call
         if not self.google_api_key:
             logger.warning("⚠️ No Google API key, returning fallback")
             return {
@@ -757,7 +873,8 @@ No JSON, no explanation, just the destination."""
                 "address": result.get("formatted_address", ""),
                 "estimated_cost": estimated_cost,
                 "place_id": result.get("place_id"),
-                "price_level": price_level
+                "price_level": price_level,
+                "location": result.get("geometry", {}).get("location", {})
             }
             
         except Exception as e:
@@ -806,19 +923,54 @@ Return ONLY the sentence, no preamble or quotes."""
             logger.error(f"Error generating description: {e}")
             return f"Explore {activity_name}, one of {destination}'s most popular attractions."
     
+    # ========================================================================
+    # APPLY MODIFICATIONS
+    # ========================================================================
+    
     async def apply_modifications(
         self,
         modifications: Dict[str, Any],
         current_itinerary: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        ENHANCED: Apply confirmed modifications to itinerary
+        FIXED: Apply confirmed modifications - USES itinerary_service methods
         """
         
         logger.info(f"✅ Applying modifications: {modifications}")
         
         # Check if full regeneration is needed
         if modifications.get('regenerate_required'):
+            
+            # NEW: Use existing itinerary_service.generate_itinerary() if available
+            if self.itinerary_service:
+                logger.info("🔄 Using itinerary_service.generate_itinerary() for full regeneration")
+                
+                params = {
+                    "destination": modifications.get('destination', current_itinerary.get('destination', {}).get('name', 'Unknown')),
+                    "budget": modifications.get('budget', current_itinerary.get('total_budget', 0)),
+                    "duration": modifications.get('duration', current_itinerary.get('duration', 0)),
+                    "travelers": current_itinerary.get('travelers', 1),
+                    "activity_preference": current_itinerary.get('activity_preference', 'moderate'),
+                    "include_flights": current_itinerary.get('include_flights', True),
+                    "include_hotels": current_itinerary.get('include_hotels', True),
+                    "user_location": current_itinerary.get('user_location')
+                }
+                
+                try:
+                    # Use existing method from itinerary_service
+                    new_itinerary = await self.itinerary_service.generate_itinerary(**params)
+                    
+                    return {
+                        "updated_itinerary": new_itinerary,
+                        "regeneration_params": None,
+                        "success": True,
+                        "message": "Full regeneration completed using itinerary_service"
+                    }
+                except Exception as e:
+                    logger.error(f"❌ Error using itinerary_service: {e}")
+                    # Fallback to returning params for regeneration
+            
+            # Fallback: Return params for regeneration (if itinerary_service not available)
             return {
                 "updated_itinerary": None,
                 "regeneration_params": {
@@ -870,7 +1022,7 @@ Return ONLY the sentence, no preamble or quotes."""
             
             updated_itinerary['daily_activities'] = updated_activities
             
-            # Recalculate budget if needed
+            # Recalculate budget if needed using existing method
             if modifications.get('budget_impact', 0) != 0:
                 budget_breakdown = updated_itinerary.get('budget_breakdown', {})
                 activities_cat = budget_breakdown.get('categories', {}).get('activities', {})
@@ -904,6 +1056,6 @@ Return ONLY the sentence, no preamble or quotes."""
         }
 
 
-def create_chatbot_service(api_key: str, google_api_key: str = None) -> ChatbotService:
-    """Factory function to create chatbot service"""
-    return ChatbotService(api_key, google_api_key)
+def create_chatbot_service(api_key: str, google_api_key: str = None, demo_data_manager = None) -> ChatbotService:
+    """Factory function to create chatbot service with dependencies"""
+    return ChatbotService(api_key, google_api_key, demo_data_manager)

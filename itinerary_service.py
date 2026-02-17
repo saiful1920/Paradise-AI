@@ -42,7 +42,14 @@ class ItineraryService:
             openai_api_key=api_key
         )
 
-        self.chatbot = ChatbotService(api_key, google_api_key=demo_data_manager.google_api_key)
+        self.chatbot = ChatbotService(
+            api_key=api_key,
+            google_api_key=demo_data_manager.google_api_key,
+            demo_data_manager=demo_data_manager  
+        )
+
+        # Link chatbot back to service (avoids circular dependency)
+        self.chatbot.set_itinerary_service(self)
     
     # ========================================================================
     # BUDGET VALIDATION

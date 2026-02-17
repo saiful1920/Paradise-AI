@@ -1,11 +1,12 @@
 let currentItinerary = null;
 let budgetChart = null;
-let conversationHistory = [];
+// REMOVED: conversationHistory - now stored in backend
 let pendingChanges = null;
 
 // Load itinerary data on page load
 document.addEventListener('DOMContentLoaded', async () => {
     await loadItinerary();
+    await loadChatHistory();  // NEW: Load chat history from backend
 });
 
 async function loadItinerary() {
@@ -29,6 +30,25 @@ async function loadItinerary() {
         alert('An error occurred while loading the itinerary');
     } finally {
         loadingModal.classList.remove('show');
+    }
+}
+
+// NEW: Load chat history from backend
+async function loadChatHistory() {
+    try {
+        const response = await fetch(`/api/chat-history/${itineraryId}`);
+        const data = await response.json();
+        
+        if (response.ok && data.conversation_history) {
+            console.log(`📚 Loaded ${data.message_count} messages from backend`);
+            
+            // Render existing conversation
+            data.conversation_history.forEach(msg => {
+                addMessageToChat(msg.role === 'user' ? 'user' : 'bot', msg.content, false);
+            });
+        }
+    } catch (error) {
+        console.error('Error loading chat history:', error);
     }
 }
 
@@ -1298,7 +1318,7 @@ async function sendMessage() {
     addMessageToChat('user', message);
     chatInput.value = '';
     
-    conversationHistory.push({ role: 'user', content: message });
+    // REMOVED: conversationHistory.push - backend handles it
     
     const loadingId = addLoadingMessage();
     
@@ -1308,8 +1328,8 @@ async function sendMessage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 itinerary_id: itineraryId,
-                message: message,
-                conversation_history: conversationHistory
+                message: message
+                // REMOVED: conversation_history parameter
             })
         });
         
@@ -1319,7 +1339,7 @@ async function sendMessage() {
         
         if (response.ok) {
             addMessageToChat('bot', data.response);
-            conversationHistory.push({ role: 'assistant', content: data.response });
+            // REMOVED: conversationHistory.push - backend handles it
             
             if (data.requires_confirmation && data.proposed_changes) {
                 pendingChanges = data.proposed_changes;
@@ -1366,7 +1386,7 @@ async function confirmChanges() {
     if (!pendingChanges) return;
     
     addMessageToChat('user', 'Yes, please apply the changes');
-    conversationHistory.push({ role: 'user', content: 'Yes, please apply the changes' });
+    // REMOVED: conversationHistory.push
     
     const buttons = document.querySelector('.confirmation-buttons');
     if (buttons) buttons.remove();
@@ -1379,8 +1399,8 @@ async function confirmChanges() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 itinerary_id: itineraryId,
-                message: 'yes, confirm and apply the changes',
-                conversation_history: conversationHistory
+                message: 'yes, confirm and apply the changes'
+                // REMOVED: conversation_history parameter
             })
         });
         
@@ -1390,7 +1410,7 @@ async function confirmChanges() {
         
         if (response.ok) {
             addMessageToChat('bot', data.response);
-            conversationHistory.push({ role: 'assistant', content: data.response });
+            // REMOVED: conversationHistory.push
             
             if (data.modifications_made && data.updated_itinerary) {
                 console.log('🔄 Applying confirmed changes');
@@ -1416,10 +1436,10 @@ async function confirmChanges() {
 
 function cancelChanges() {
     addMessageToChat('user', 'No, cancel the changes');
-    conversationHistory.push({ role: 'user', content: 'No, cancel the changes' });
+    // REMOVED: conversationHistory.push
     
     addMessageToChat('bot', 'Okay, cancelled. What else would you like to do?');
-    conversationHistory.push({ role: 'assistant', content: 'Okay, cancelled.' });
+    // REMOVED: conversationHistory.push
     
     const buttons = document.querySelector('.confirmation-buttons');
     if (buttons) buttons.remove();
@@ -1542,4 +1562,4 @@ async function downloadItineraryAsPDF() {
     }
 }
 
-console.log('✅ Itinerary.js loaded - v5.0 FIXED budget reallocation with proper UI updates');
+console.log('✅ Itinerary.js loaded - v6.0 FIXED budget reallocation with backend conversation storage');
