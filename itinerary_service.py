@@ -1783,75 +1783,95 @@ class ItineraryService:
         self,
         message: str,
         current_itinerary: Dict[str, Any],
-        conversation_history: List[Dict[str, str]]
+        conversation_history: List[Dict[str, str]]   # ignored — backend storage used
     ) -> Dict[str, Any]:
-        """Process chat message using intelligent chatbot"""
-        
+        """
+        Process chat message.
+
+        Delegates ALL confirmation/cancellation logic to chatbot.py, which
+        intercepts yes/no BEFORE running intent detection.
+
+        The new 'trip_param_queued' intent means the user queued a parameter
+        change (destination, budget, duration, etc.) but hasn't confirmed yet.
+        We pass the response back without touching the itinerary.
+        """
+
         logger.info(f"💬 Processing: {message[:100]}...")
-        
-        # Use chatbot service
+
+        itinerary_id = current_itinerary.get("itinerary_id", "unknown")
+
+        # Delegate entirely to chatbot — confirmation handled inside
         result = await self.chatbot.process_message(
-            itinerary_id=current_itinerary.get('itinerary_id', 'unknown'),
+            itinerary_id=itinerary_id,
             message=message,
             current_itinerary=current_itinerary,
-            conversation_history=conversation_history
+            conversation_history=None   # chatbot uses backend storage
         )
-        
-        logger.info(f"🎯 Intent: {result['intent']}, Confidence: {result.get('confidence', 0)}")
-        
-        # Handle confirmation messages
-        message_lower = message.lower()
-        is_confirmation = any(word in message_lower for word in 
-            ["yes", "confirm", "apply", "go ahead", "do it", "sure", "okay", "ok", "proceed"])
-        
-        if is_confirmation and result.get('requires_confirmation'):
-            # User is confirming pending changes
-            result['confirmed_changes'] = True
-        
-        # If changes are confirmed, apply them
-        if result.get('confirmed_changes') or is_confirmation:
-            modifications = result.get('modifications', {})
-            
-            application_result = await self.chatbot.apply_modifications(
-                modifications=modifications,
-                current_itinerary=current_itinerary
-            )
-            
-            if application_result['success']:
-                # Check if full regeneration is needed
-                if application_result['regeneration_params']:
-                    logger.info("🔄 Full regeneration required")
-                    
-                    # Generate new itinerary
-                    new_itinerary = await self.generate_itinerary(
-                        **application_result['regeneration_params']
-                    )
-                    
-                    return {
-                        "response": result['response'] + "\n\n✅ I've created a new itinerary based on your request!",
-                        "modifications_made": True,
-                        "updated_itinerary": new_itinerary,
-                        "requires_confirmation": False,
-                        "modification_type": "full_regeneration"
-                    }
-                
-                # Day-level modification
-                elif application_result['updated_itinerary']:
-                    return {
-                        "response": result['response'] + "\n\n✅ I've updated your itinerary!",
-                        "modifications_made": True,
-                        "updated_itinerary": application_result['updated_itinerary'],
-                        "requires_confirmation": False,
-                        "modification_type": "day_modification"
-                    }
-        
-        # No modifications or awaiting confirmation
+
+        intent = result.get("intent")
+        logger.info(f"🎯 Intent: {intent}, Confirmed: {result.get('confirmed_changes', False)}")
+
+        # ── Case 1: Modification already applied (confirmed + done) ─────────
+        if result.get("confirmed_changes") and result.get("modifications_made"):
+
+            if result.get("regeneration_params"):
+                logger.info("🔄 Full regeneration required (fallback path)")
+                new_itinerary = await self.generate_itinerary(**result["regeneration_params"])
+                return {
+                    "response": result["response"],
+                    "modifications_made": True,
+                    "updated_itinerary": new_itinerary,
+                    "requires_confirmation": False,
+                    "modification_type": "full_regeneration",
+                    "proposed_changes": {},
+                    "confidence": 1.0
+                }
+
+            return {
+                "response": result["response"],
+                "modifications_made": True,
+                "updated_itinerary": result.get("updated_itinerary"),
+                "requires_confirmation": False,
+                "modification_type": intent or "modification_applied",
+                "proposed_changes": {},
+                "confidence": 1.0
+            }
+
+        # ── Case 2: Trip-level params queued (accumulating, not yet confirmed) ─
+        # chatbot.accumulated_params has the change stored.
+        # Just relay the response message — nothing changes in the itinerary yet.
+        if intent == "trip_param_queued" or result.get("is_trip_param_change"):
+            return {
+                "response": result.get("response", ""),
+                "modifications_made": False,
+                "updated_itinerary": None,
+                "requires_confirmation": False,   # chatbot manages this internally
+                "modification_type": "trip_param_queued",
+                "proposed_changes": result.get("modifications", {}),
+                "confidence": result.get("confidence", 0.95)
+            }
+
+        # ── Case 3: Day-level modification — waiting for user confirmation ───
+        if result.get("requires_confirmation"):
+            return {
+                "response": result.get("response", ""),
+                "modifications_made": False,
+                "updated_itinerary": None,
+                "requires_confirmation": True,
+                "proposed_changes": result.get("modifications", {}),
+                "modification_type": intent or "none",
+                "confidence": result.get("confidence", 0.0)
+            }
+
+        # ── Case 4: Informational / cancelled / error ───────────────────────
         return {
-            "response": result['response'],
+            "response": result.get("response", ""),
             "modifications_made": False,
-            "requires_confirmation": result.get('requires_confirmation', False),
-            "proposed_changes": result.get('modifications', {}),
-            "modification_type": result.get('intent', 'none'),
-            "confidence": result.get('confidence', 0.0)
+            "updated_itinerary": None,
+            "requires_confirmation": False,
+            "proposed_changes": {},
+            "modification_type": intent or "none",
+            "confidence": result.get("confidence", 0.0)
         }
+
     
