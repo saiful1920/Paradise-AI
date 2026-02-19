@@ -1,6 +1,5 @@
 let currentItinerary = null;
 let budgetChart = null;
-// REMOVED: conversationHistory - now stored in backend
 let pendingChanges = null;
 
 // Load itinerary data on page load
@@ -1318,8 +1317,6 @@ async function sendMessage() {
     addMessageToChat('user', message);
     chatInput.value = '';
     
-    // REMOVED: conversationHistory.push - backend handles it
-    
     const loadingId = addLoadingMessage();
     
     try {
@@ -1329,7 +1326,6 @@ async function sendMessage() {
             body: JSON.stringify({
                 itinerary_id: itineraryId,
                 message: message
-                // REMOVED: conversation_history parameter
             })
         });
         
@@ -1339,7 +1335,6 @@ async function sendMessage() {
         
         if (response.ok) {
             addMessageToChat('bot', data.response);
-            // REMOVED: conversationHistory.push - backend handles it
             
             if (data.requires_confirmation && data.proposed_changes) {
                 pendingChanges = data.proposed_changes;
@@ -1386,7 +1381,6 @@ async function confirmChanges() {
     if (!pendingChanges) return;
     
     addMessageToChat('user', 'Yes, please apply the changes');
-    // REMOVED: conversationHistory.push
     
     const buttons = document.querySelector('.confirmation-buttons');
     if (buttons) buttons.remove();
@@ -1400,7 +1394,6 @@ async function confirmChanges() {
             body: JSON.stringify({
                 itinerary_id: itineraryId,
                 message: 'yes, confirm and apply the changes'
-                // REMOVED: conversation_history parameter
             })
         });
         
@@ -1410,7 +1403,6 @@ async function confirmChanges() {
         
         if (response.ok) {
             addMessageToChat('bot', data.response);
-            // REMOVED: conversationHistory.push
             
             if (data.modifications_made && data.updated_itinerary) {
                 console.log('🔄 Applying confirmed changes');
@@ -1436,10 +1428,8 @@ async function confirmChanges() {
 
 function cancelChanges() {
     addMessageToChat('user', 'No, cancel the changes');
-    // REMOVED: conversationHistory.push
     
     addMessageToChat('bot', 'Okay, cancelled. What else would you like to do?');
-    // REMOVED: conversationHistory.push
     
     const buttons = document.querySelector('.confirmation-buttons');
     if (buttons) buttons.remove();
