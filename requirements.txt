@@ -13,3 +13,9 @@ requests==2.31.0
 moviepy==1.0.3
 imageio-ffmpeg==0.4.9
 python-multipart
+sqlalchemy 
+asyncpg 
+redis 
+celery 
+slowapi 
+pydantic-settings
