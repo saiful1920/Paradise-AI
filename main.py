@@ -1,19 +1,23 @@
 """
-Enhanced Travel Itinerary Generator API
+Enhanced Travel Itinerary Generator API - Production Version
 
-Features:
 - Multi-city itinerary support
 - Excursions, tours, and experiences
 - Detailed budget breakdown with calculations
-- Real-time chat modifications
+- Real-time chat modifications (persisted in DB)
 - Recommended experiences section
+- Database persistence (PostgreSQL)
+- Redis caching & rate limiting
+- Celery background tasks for video generation
 """
 
-from fastapi import FastAPI, HTTPException, Request, File, UploadFile
+from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 import uvicorn
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any
@@ -23,12 +27,21 @@ import uuid
 import asyncio
 from pathlib import Path
 import os
+import time
 from dotenv import load_dotenv
 import logging
 import shutil
 import traceback
-import base64
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update, delete
+from database import get_db, engine, Base
+from models import Itinerary as ItineraryModel, ChatMessage, VideoTask, PendingModification, AccumulatedParams
+from config import settings
+from rate_limiter import limiter, rate_limit_exceeded_handler
+import cache
+from tasks import celery_app, generate_video
 
+# Existing service imports
 from itinerary_service import ItineraryService
 from demo_data import DemoDataManager
 from flight_data import AviasalesFlightFormatter
@@ -36,7 +49,6 @@ from flight_data import AviasalesFlightFormatter
 # Optional video service imports
 try:
     from video_service import VideoGenerationService
-    from video_database import VideoDatabase
     VIDEO_SERVICE_AVAILABLE = True
 except ImportError:
     VIDEO_SERVICE_AVAILABLE = False
@@ -58,7 +70,7 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# CORS middleware
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -66,6 +78,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # Create necessary directories
 static_path = Path("static")
@@ -85,542 +101,483 @@ app.mount("/videos", StaticFiles(directory="videos"), name="videos")
 # Templates
 templates = Jinja2Templates(directory="templates")
 
-# Get API keys
-GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY")
-GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-FLIGHT_API_KEY = os.getenv("FLIGHT_API_KEY")
-FLIGHT_AFFILIATE_MARKER = os.getenv("FLIGHT_AFFILIATE_MARKER")
-KIE_AI_API_KEY = os.getenv("KIE_AI_API_KEY")
+# Initialize services 
+demo_data_manager = DemoDataManager(
+    settings.GOOGLE_PLACES_API_KEY,
+    settings.GOOGLE_MAPS_API_KEY,
+    settings.OPENAI_API_KEY
+)
+itinerary_service = ItineraryService(
+    demo_data_manager,
+    api_key=settings.OPENAI_API_KEY
+)
+flight_data = AviasalesFlightFormatter(
+    api_token=settings.FLIGHT_API_KEY,
+    marker=settings.FLIGHT_AFFILIATE_MARKER
+)
 
-# Initialize services
-logger.info("🚀 Initializing services...")
-demo_data_manager = DemoDataManager(GOOGLE_PLACES_API_KEY, GOOGLE_MAPS_API_KEY, OPENAI_API_KEY)
-itinerary_service = ItineraryService(demo_data_manager, api_key=OPENAI_API_KEY)
-flight_data = AviasalesFlightFormatter(api_token=FLIGHT_API_KEY, marker=FLIGHT_AFFILIATE_MARKER)
-
-# Video services (optional)
+# Video service 
 video_service = None
-video_db = None
-if VIDEO_SERVICE_AVAILABLE and KIE_AI_API_KEY:
+if VIDEO_SERVICE_AVAILABLE and settings.KIE_AI_API_KEY:
     try:
-        video_service = VideoGenerationService(KIE_AI_API_KEY)
-        video_db = VideoDatabase()
+        video_service = VideoGenerationService(settings.KIE_AI_API_KEY)
         logger.info("✅ Video service initialized")
     except Exception as e:
         logger.warning(f"⚠️ Video service initialization failed: {e}")
 
-logger.info("✅ Services initialized successfully")
+# Background task for cleaning up old videos
+async def cleanup_videos_folder():
+    """Background task: delete video files older than 1 hour, running every hour."""
+    # Wait one hour before first cleanup
+    await asyncio.sleep(3600)
+    
+    while True:
+        try:
+            videos_dir = Path("videos")
+            if videos_dir.exists():
+                now = time.time()
+                deleted_count = 0
+                for file in videos_dir.glob("*.mp4"):
+                    try:
+                        # Get modification time as float
+                        file_mtime = os.path.getmtime(str(file))
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not get mtime for {file}: {e}")
+                        continue
+                    
+                    # Delete if older than 1 hour
+                    if now - file_mtime > 3600:
+                        file.unlink()
+                        deleted_count += 1
+                        logger.info(f"🧹 Cleaned up old video: {file}")
+                
+                if deleted_count:
+                    logger.info(f"✅ Video cleanup removed {deleted_count} old file(s)")
+        except Exception as e:
+            logger.error(f"❌ Error in video cleanup: {e}", exc_info=True)
+        
+        # Wait another hour before next run
+        await asyncio.sleep(3600)
 
-# Storage (in production, use database)
-active_itineraries = {}
-video_tasks = {}
+# Create database tables on startup 
+@app.on_event("startup")
+async def startup():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("✅ Database tables created/verified")
 
+    # Start background video cleanup
+    asyncio.create_task(cleanup_videos_folder())
+    logger.info("✅ Video cleanup task scheduled (first run in 1 hour)")
 
-# =============================================================================
-# Pydantic Models
-# =============================================================================
-
+# Pydantic models for request validation
 class ItineraryRequest(BaseModel):
-    destination: str = Field(..., description="Destination (city, country, or multiple cities)")
-    budget: float = Field(..., gt=0, description="Total budget in USD")
-    activity_preference: str = Field(..., description="Activity level: relaxed, moderate, or high")
-    include_flights: bool = Field(default=False, description="Include flight costs")
-    include_hotels: bool = Field(default=False, description="Include hotel costs")
-    duration: int = Field(..., ge=1, le=30, description="Trip duration in days")
-    travelers: int = Field(..., ge=1, le=20, description="Number of travelers")
-    user_location: Optional[str] = Field(default="New York", description="User's departure city")
-
+    destination: str
+    budget: float
+    activity_preference: str
+    include_flights: bool = False
+    include_hotels: bool = False
+    duration: int
+    travelers: int
+    user_location: Optional[str] = "New York"
 
 class BudgetReallocationRequest(BaseModel):
     itinerary_id: str
     selected_categories: List[str]
 
-
-class ChatMessage(BaseModel):
+class ChatMessageRequest(BaseModel):
     itinerary_id: str
     message: str
-    conversation_history: Optional[List[Dict[str, str]]] = []
-
+    conversation_history: Optional[List[Dict[str, str]]] = []   
 
 class VideoGenerationRequest(BaseModel):
     itinerary_id: str
     user_photo_filename: str
 
+# Helper functions for DB interactions
+async def get_itinerary_from_db(itinerary_id: str, db: AsyncSession) -> Optional[Dict]:
+    """Fetch itinerary from DB and convert to dict."""
+    result = await db.execute(select(ItineraryModel).where(ItineraryModel.id == itinerary_id))
+    itinerary = result.scalar_one_or_none()
+    if not itinerary:
+        return None
+    # Convert SQLAlchemy model to dict
+    data = {
+        "itinerary_id": itinerary.id,
+        "user_location": itinerary.user_location,
+        "destination": itinerary.destination,
+        "duration": itinerary.duration,
+        "travelers": itinerary.travelers,
+        "total_budget": itinerary.total_budget,
+        "activity_preference": itinerary.activity_preference,
+        "include_flights": itinerary.include_flights,
+        "include_hotels": itinerary.include_hotels,
+        "main_title": itinerary.main_title,
+        "trip_dates": itinerary.trip_dates,
+        "daily_activities": itinerary.daily_activities,
+        "budget_breakdown": itinerary.budget_breakdown,
+        "recommended_experiences": itinerary.recommended_experiences,
+        "hotel_recommendations": itinerary.hotel_recommendations,
+        "restaurant_recommendations": itinerary.restaurant_recommendations,
+        "updated_flights": itinerary.updated_flights,
+        "local_transport": itinerary.local_transport,
+        "attractions_summary": itinerary.attractions_summary,
+        "created_at": itinerary.created_at.isoformat() if itinerary.created_at else None,
+    }
+    return data
 
-# =============================================================================
+async def save_itinerary_to_db(itinerary_data: Dict, db: AsyncSession) -> str:
+    """Save itinerary dict to DB, return ID."""
+    itinerary_id = itinerary_data.get("itinerary_id") or str(uuid.uuid4())
+    # Extract fields that match model
+    model_data = {
+        "id": itinerary_id,
+        "user_location": itinerary_data.get("user_location"),
+        "destination": itinerary_data.get("destination"),
+        "duration": itinerary_data.get("duration"),
+        "travelers": itinerary_data.get("travelers"),
+        "total_budget": itinerary_data.get("total_budget"),
+        "activity_preference": itinerary_data.get("activity_preference"),
+        "include_flights": itinerary_data.get("include_flights"),
+        "include_hotels": itinerary_data.get("include_hotels"),
+        "main_title": itinerary_data.get("main_title"),
+        "trip_dates": itinerary_data.get("trip_dates"),
+        "daily_activities": itinerary_data.get("daily_activities"),
+        "budget_breakdown": itinerary_data.get("budget_breakdown"),
+        "recommended_experiences": itinerary_data.get("recommended_experiences"),
+        "hotel_recommendations": itinerary_data.get("hotel_recommendations"),
+        "restaurant_recommendations": itinerary_data.get("restaurant_recommendations"),
+        "updated_flights": itinerary_data.get("updated_flights"),
+        "local_transport": itinerary_data.get("local_transport"),
+        "attractions_summary": itinerary_data.get("attractions_summary"),
+    }
+    itinerary = ItineraryModel(**model_data)
+    db.add(itinerary)
+    await db.commit()
+    return itinerary_id
+
+
 # API Endpoints
-# =============================================================================
-
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    """Serve the home page"""
-    logger.info("📄 Serving home page")
     return templates.TemplateResponse("index.html", {"request": request})
 
-
 @app.get("/itinerary/{itinerary_id}", response_class=HTMLResponse)
-async def view_itinerary(request: Request, itinerary_id: str):
-    """Serve the itinerary page"""
-    if itinerary_id not in active_itineraries:
-        logger.warning(f"⚠️ Itinerary not found: {itinerary_id}")
+async def view_itinerary(request: Request, itinerary_id: str, db: AsyncSession = Depends(get_db)):
+    itinerary = await get_itinerary_from_db(itinerary_id, db)
+    if not itinerary:
         raise HTTPException(status_code=404, detail="Itinerary not found")
-    
-    logger.info(f"📄 Serving itinerary page: {itinerary_id}")
     return templates.TemplateResponse("itinerary.html", {
         "request": request,
         "itinerary_id": itinerary_id
     })
 
-
 @app.get("/video/{video_id}", response_class=HTMLResponse)
-async def view_video(request: Request, video_id: str):
-    """Serve the video display page"""
-    if video_id not in video_tasks:
-        logger.warning(f"⚠️ Video not found: {video_id}")
+async def view_video(request: Request, video_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(VideoTask).where(VideoTask.id == video_id))
+    video = result.scalar_one_or_none()
+    if not video:
         raise HTTPException(status_code=404, detail="Video not found")
-    
-    logger.info(f"📄 Serving video page: {video_id}")
     return templates.TemplateResponse("video.html", {
         "request": request,
         "video_id": video_id
     })
 
-
 @app.post("/api/upload-photo")
-async def upload_photo(file: UploadFile = File(...)):
-    """Upload user photo for video generation"""
+@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS}/minute")
+async def upload_photo(request: Request, file: UploadFile = File(...)):
     try:
         logger.info(f"📤 Uploading photo: {file.filename}")
-        
         if not file.content_type.startswith("image/"):
             raise HTTPException(status_code=400, detail="File must be an image")
-        
         file_extension = file.filename.split(".")[-1]
         unique_filename = f"{uuid.uuid4()}.{file_extension}"
         file_path = uploads_path / unique_filename
-        
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
         logger.info(f"✅ Photo uploaded: {unique_filename}")
-        
         return {
             "success": True,
             "filename": unique_filename,
             "url": f"/uploads/{unique_filename}"
         }
-        
     except Exception as e:
         logger.error(f"❌ Error uploading photo: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post("/api/create-itinerary")
-async def create_itinerary(request: ItineraryRequest):
-    """
-    Create a new itinerary based on user input.
-    
-    Enhanced to support:
-    - Multi-city trips (country names or multiple cities)
-    - Experiences and tours
-    - Detailed budget breakdowns
-    """
+@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS}/minute")
+async def create_itinerary(
+    request: Request,
+    itinerary_req: ItineraryRequest,
+    db: AsyncSession = Depends(get_db)
+):
     try:
-        logger.info("=" * 80)
-        logger.info(f"🌍 CREATING ITINERARY")
-        logger.info("=" * 80)
-        logger.info(f"📍 Destination: {request.destination}")
-        logger.info(f"💰 Budget: ${request.budget}")
-        logger.info(f"📅 Duration: {request.duration} days")
-        logger.info(f"👥 Travelers: {request.travelers}")
-        logger.info(f"✈️ Include Flights: {request.include_flights}")
-        logger.info(f"🏨 Include Hotels: {request.include_hotels}")
-        logger.info(f"🎯 Activity Level: {request.activity_preference}")
-        logger.info(f"📍 User Location: {request.user_location}")
-        logger.info("=" * 80)
-        
+        logger.info("="*80)
+        logger.info(f"🌍 CREATING ITINERARY for {itinerary_req.destination}")
+        logger.info("="*80)
+
         # Validate budget
-        logger.info("\n💵 Validating budget...")
         validation = await itinerary_service.validate_budget(
-            user_location=request.user_location,
-            destination=request.destination,
-            budget=request.budget,
-            duration=request.duration,
-            travelers=request.travelers,
-            include_flights=request.include_flights,
-            include_hotels=request.include_hotels
+            user_location=itinerary_req.user_location,
+            destination=itinerary_req.destination,
+            budget=itinerary_req.budget,
+            duration=itinerary_req.duration,
+            travelers=itinerary_req.travelers,
+            include_flights=itinerary_req.include_flights,
+            include_hotels=itinerary_req.include_hotels
         )
-        
-        logger.info(f"✅ Budget validation: {validation['sufficient']}")
-        
+
         if not validation["sufficient"]:
-            logger.warning(f"❌ Insufficient budget. Minimum required: ${validation['minimum_budget']}")
             return JSONResponse(
                 status_code=400,
                 content={
                     "error": "insufficient_budget",
                     "message": validation["message"],
                     "minimum_budget": validation["minimum_budget"],
-                    "current_budget": request.budget,
+                    "current_budget": itinerary_req.budget,
                     "breakdown": validation.get("breakdown", {})
                 }
             )
-        
+
         # Generate itinerary
-        logger.info("\n🎨 Generating itinerary...")
         itinerary = await itinerary_service.generate_itinerary(
-            user_location=request.user_location,
-            destination=request.destination,
-            budget=request.budget,
-            duration=request.duration,
-            travelers=request.travelers,
-            activity_preference=request.activity_preference,
-            include_flights=request.include_flights,
-            include_hotels=request.include_hotels
+            user_location=itinerary_req.user_location,
+            destination=itinerary_req.destination,
+            budget=itinerary_req.budget,
+            duration=itinerary_req.duration,
+            travelers=itinerary_req.travelers,
+            activity_preference=itinerary_req.activity_preference,
+            include_flights=itinerary_req.include_flights,
+            include_hotels=itinerary_req.include_hotels
         )
-        
-        # Store itinerary
-        itinerary_id = str(uuid.uuid4())
-        itinerary["itinerary_id"] = itinerary_id
-        itinerary["user_location"] = request.user_location  # Store for chatbot context
-        active_itineraries[itinerary_id] = itinerary
-        
-        # Initialize chatbot context for this itinerary
-        itinerary_service.chatbot.update_context(itinerary_id, itinerary)
-        
-        logger.info(f"\n✅ Itinerary created successfully!")
-        logger.info(f"🆔 Itinerary ID: {itinerary_id}")
-        logger.info(f"🏙️ Cities: {itinerary['destination'].get('cities', [])}")
-        logger.info("=" * 80)
-        
+
+        # Save to DB
+        itinerary_id = await save_itinerary_to_db(itinerary, db)
+
+        logger.info(f"✅ Itinerary created: {itinerary_id}")
         return {
             "itinerary_id": itinerary_id,
             "itinerary": itinerary
         }
-        
+
     except Exception as e:
-        logger.error(f"\n❌ ERROR CREATING ITINERARY: {str(e)}")
+        logger.error(f"❌ ERROR: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/api/itinerary/{itinerary_id}")
-async def get_itinerary(itinerary_id: str):
-    """Get an existing itinerary"""
-    if itinerary_id not in active_itineraries:
-        logger.warning(f"⚠️ Itinerary not found: {itinerary_id}")
+async def get_itinerary(itinerary_id: str, db: AsyncSession = Depends(get_db)):
+    itinerary = await get_itinerary_from_db(itinerary_id, db)
+    if not itinerary:
         raise HTTPException(status_code=404, detail="Itinerary not found")
-    
-    logger.info(f"📤 Returning itinerary: {itinerary_id}")
-    return active_itineraries[itinerary_id]
-
+    return itinerary
 
 @app.post("/api/generate-video")
-async def generate_video(request: VideoGenerationRequest):
-    """Start video generation for itinerary"""
+@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS}/minute")
+async def generate_video_endpoint(
+    request: Request,
+    video_req: VideoGenerationRequest,
+    db: AsyncSession = Depends(get_db)
+):
     if not VIDEO_SERVICE_AVAILABLE or not video_service:
         raise HTTPException(status_code=503, detail="Video service not available")
-    
+
     try:
-        logger.info("=" * 80)
-        logger.info(f"🎥 GENERATING VIDEO")
-        logger.info(f"🆔 Itinerary ID: {request.itinerary_id}")
-        logger.info(f"📸 User Photo: {request.user_photo_filename}")
-        logger.info("=" * 80)
-        
-        if request.itinerary_id not in active_itineraries:
+        # Verify itinerary exists
+        itinerary = await get_itinerary_from_db(video_req.itinerary_id, db)
+        if not itinerary:
             raise HTTPException(status_code=404, detail="Itinerary not found")
-        
-        itinerary = active_itineraries[request.itinerary_id]
-        user_photo_url = f"http://localhost:8001/uploads/{request.user_photo_filename}"
+
         video_id = str(uuid.uuid4())
-        
-        video_tasks[video_id] = {
-            "status": "processing",
-            "progress": 0,
-            "total_days": len(itinerary.get("daily_activities", [])),
-            "completed_days": 0,
-            "current_day": 0,
-            "itinerary_id": request.itinerary_id,
-            "created_at": datetime.now().isoformat(),
-            "stage": "initializing",
-            "message": "Starting video generation..."
-        }
-        
-        # Start background task
-        asyncio.create_task(
-            generate_video_background(
-                video_id,
-                user_photo_url,
-                itinerary.get("daily_activities", []),
-                itinerary["destination"]["name"],
-                itinerary["duration"],
-                request.itinerary_id
-            )
+        user_photo_url = f"http://localhost:8001/uploads/{video_req.user_photo_filename}"
+
+        # Create video task record
+        video_task = VideoTask(
+            id=video_id,
+            itinerary_id=video_req.itinerary_id,
+            user_photo_filename=video_req.user_photo_filename,
+            status="processing",
+            progress=0,
+            total_days=itinerary.get("duration", 0),
+            stage="queued",
+            message="Video generation queued"
         )
-        
-        logger.info(f"✅ Video generation started: {video_id}")
-        
+        db.add(video_task)
+        await db.commit()
+
+        # Enqueue Celery task (async)
+        generate_video.delay(video_id, video_req.itinerary_id, user_photo_url, video_req.user_photo_filename)
+
         return {
             "success": True,
             "video_id": video_id,
             "message": "Video generation started"
         }
-        
-    except Exception as e:
-        logger.error(f"❌ Error starting video generation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
+    except Exception as e:
+        logger.error(f"❌ Error starting video: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/video-status/{video_id}")
-async def get_video_status(video_id: str):
-    """Get video generation status"""
-    if video_id not in video_tasks:
+async def get_video_status(video_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(VideoTask).where(VideoTask.id == video_id))
+    video = result.scalar_one_or_none()
+    if not video:
         raise HTTPException(status_code=404, detail="Video not found")
-    
-    return video_tasks[video_id]
 
+    # Return as dict 
+    return {
+        "status": video.status,
+        "progress": video.progress,
+        "total_days": video.total_days,
+        "completed_days": video.completed_days,
+        "current_day": video.current_day,
+        "stage": video.stage,
+        "message": video.message,
+        "error": video.error,
+        "video_url": video.video_url,
+        "video_path": video.video_path,
+        "video_base64": video.video_base64,
+        "created_at": video.created_at.isoformat() if video.created_at else None,
+        "completed_at": video.completed_at.isoformat() if video.completed_at else None,
+    }
 
 @app.post("/api/reallocate-budget")
-async def reallocate_budget(request: BudgetReallocationRequest):
-    """Reallocate budget - FIXED"""
+@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS}/minute")
+async def reallocate_budget(
+    request: Request,
+    realloc_req: BudgetReallocationRequest,
+    db: AsyncSession = Depends(get_db)
+):
     try:
-        logger.info(f"💰 Reallocating budget for {request.itinerary_id}")
-        
-        if request.itinerary_id not in active_itineraries:
+        # Fetch itinerary from DB
+        itinerary = await get_itinerary_from_db(realloc_req.itinerary_id, db)
+        if not itinerary:
             raise HTTPException(status_code=404, detail="Itinerary not found")
-        
-        current_itinerary = active_itineraries[request.itinerary_id]
-        
-        # Use fixed reallocation method
-        updated_budget = await itinerary_service.reallocate_budget(
-            current_itinerary=current_itinerary,
-            selected_categories=request.selected_categories
-        )
-        
-        # Update stored itinerary
-        active_itineraries[request.itinerary_id]["budget_breakdown"] = updated_budget
 
-         # Update chatbot context
-        itinerary_service.chatbot.update_context(request.itinerary_id, active_itineraries[request.itinerary_id])
-        
-        logger.info("✅ Budget reallocated successfully")
-        
-        return {
-            "success": True,
-            "budget_breakdown": updated_budget
-        }
-        
+        # Reallocate 
+        updated_budget = await itinerary_service.reallocate_budget(
+            current_itinerary=itinerary,
+            selected_categories=realloc_req.selected_categories
+        )
+
+        # Update DB
+        await db.execute(
+            update(ItineraryModel)
+            .where(ItineraryModel.id == realloc_req.itinerary_id)
+            .values(budget_breakdown=updated_budget)
+        )
+        await db.commit()
+
+        return {"success": True, "budget_breakdown": updated_budget}
+
     except Exception as e:
         logger.error(f"❌ Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post("/api/chat")
-async def chat_with_ai(request: ChatMessage):
-    """
-    FIXED: Chat endpoint with backend conversation storage
-    """
+@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS}/minute")
+async def chat_with_ai(
+    request: Request,
+    chat_req: ChatMessageRequest,
+    db: AsyncSession = Depends(get_db)
+):
     try:
-        logger.info(f"💬 Chat message from {request.itinerary_id}")
-        logger.info(f"📝 Message: {request.message}")
-        
-        if request.itinerary_id not in active_itineraries:
+        # Fetch itinerary
+        itinerary = await get_itinerary_from_db(chat_req.itinerary_id, db)
+        if not itinerary:
             raise HTTPException(status_code=404, detail="Itinerary not found")
-        
-        current_itinerary = active_itineraries[request.itinerary_id]
-        
-        # Get conversation history from BACKEND (not frontend)
-        history = itinerary_service.chatbot.get_conversation_history(request.itinerary_id)
-        logger.info(f"📚 Backend conversation history: {len(history)} messages")
-        
-        # Process message with backend storage
-        response = await itinerary_service.process_chat_message(
-            message=request.message,
-            current_itinerary=current_itinerary,
-            conversation_history=None  # Ignored, uses backend storage
+
+        # Load conversation history from DB
+        history_result = await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.itinerary_id == chat_req.itinerary_id)
+            .order_by(ChatMessage.timestamp)
+            .limit(20)
         )
-        
-        # Update itinerary if modified
-        if response.get("modifications_made") and response.get("updated_itinerary"):
-            active_itineraries[request.itinerary_id] = response["updated_itinerary"]
-            
-            # Update chatbot context
-            itinerary_service.chatbot.update_context(
-                request.itinerary_id, 
-                response["updated_itinerary"]
+        history_messages = history_result.scalars().all()
+        conversation_history = [
+            {"role": msg.role, "content": msg.content} for msg in history_messages
+        ]
+
+       # Save user message to DB
+        response_data = await itinerary_service.process_chat_message(
+            message=chat_req.message,
+            current_itinerary=itinerary,
+            conversation_history=conversation_history  
+        )
+
+        # If itinerary was updated, save it
+        if response_data.get("modifications_made") and response_data.get("updated_itinerary"):
+            updated_itinerary = response_data["updated_itinerary"]
+            updated_itinerary["itinerary_id"] = chat_req.itinerary_id
+            await db.execute(
+                update(ItineraryModel)
+                .where(ItineraryModel.id == chat_req.itinerary_id)
+                .values(
+                    daily_activities=updated_itinerary.get("daily_activities"),
+                    budget_breakdown=updated_itinerary.get("budget_breakdown"),
+                    recommended_experiences=updated_itinerary.get("recommended_experiences"),
+                    hotel_recommendations=updated_itinerary.get("hotel_recommendations"),
+                    restaurant_recommendations=updated_itinerary.get("restaurant_recommendations"),
+                    updated_flights=updated_itinerary.get("updated_flights")
+
+                )
             )
-            
-            logger.info("✅ Itinerary updated from chat")
-        
-        # Return response with backend conversation history
+
+        await db.commit()
+
+        # Return response, including conversation history from DB (optional)
         return {
-            "response": response.get("response", ""),
-            "modifications_made": response.get("modifications_made", False),
-            "updated_itinerary": response.get("updated_itinerary"),
-            "requires_confirmation": response.get("requires_confirmation", False),
-            "proposed_changes": response.get("proposed_changes", {}),
-            "modification_type": response.get("modification_type", "none"),
-            "confidence": response.get("confidence", 0.0),
-            # Return backend history for frontend display
-            "conversation_history": itinerary_service.chatbot.get_conversation_history(request.itinerary_id)
+            "response": response_data.get("response", ""),
+            "modifications_made": response_data.get("modifications_made", False),
+            "updated_itinerary": response_data.get("updated_itinerary"),
+            "requires_confirmation": response_data.get("requires_confirmation", False),
+            "proposed_changes": response_data.get("proposed_changes", {}),
+            "modification_type": response_data.get("modification_type", "none"),
+            "confidence": response_data.get("confidence", 0.0),
+            "conversation_history": await get_chat_history_from_db(chat_req.itinerary_id, db)
         }
-        
+
     except Exception as e:
-        logger.error(f"❌ Error: {e}")
+        logger.error(f"❌ Chat error: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+async def get_chat_history_from_db(itinerary_id: str, db: AsyncSession) -> List[Dict]:
+    result = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.itinerary_id == itinerary_id)
+        .order_by(ChatMessage.timestamp)
+    )
+    messages = result.scalars().all()
+    return [{"role": m.role, "content": m.content, "timestamp": m.timestamp.isoformat()} for m in messages]
 
 @app.get("/api/chat-history/{itinerary_id}")
-async def get_chat_history(itinerary_id: str):
-    """
-    NEW: Get conversation history from backend
-    """
-    if itinerary_id not in active_itineraries:
-        raise HTTPException(status_code=404, detail="Itinerary not found")
-    
-    history = itinerary_service.chatbot.get_conversation_history(itinerary_id)
-    
+async def get_chat_history(itinerary_id: str, db: AsyncSession = Depends(get_db)):
+    history = await get_chat_history_from_db(itinerary_id, db)
     return {
         "itinerary_id": itinerary_id,
         "conversation_history": history,
         "message_count": len(history)
     }
 
-
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint"""
     return {
         "status": "healthy",
         "services": {
-            "google_places": bool(GOOGLE_PLACES_API_KEY),
-            "openai": bool(OPENAI_API_KEY),
-            "flights": bool(FLIGHT_API_KEY),
-            "video": VIDEO_SERVICE_AVAILABLE and bool(video_service)
+            "google_places": bool(settings.GOOGLE_PLACES_API_KEY),
+            "openai": bool(settings.OPENAI_API_KEY),
+            "flights": bool(settings.FLIGHT_API_KEY),
+            "video": VIDEO_SERVICE_AVAILABLE and bool(video_service),
+            "database": True,
+            "redis": True
         }
     }
 
-
-# =============================================================================
-# Background Tasks
-# =============================================================================
-
-async def generate_video_background(
-    video_id: str,
-    user_photo_url: str,
-    daily_activities: List[Dict[str, Any]],
-    destination: str,
-    duration: int,
-    itinerary_id: str
-):
-    """Background task for video generation"""
-    if not VIDEO_SERVICE_AVAILABLE or not video_service:
-        video_tasks[video_id]["status"] = "failed"
-        video_tasks[video_id]["error"] = "Video service not available"
-        return
-    
-    try:
-        logger.info(f"🎬 Starting background video generation for {video_id}")
-        
-        # Create database session if available
-        if video_db:
-            video_db.create_session(
-                video_id=video_id,
-                itinerary_id=itinerary_id,
-                destination=destination,
-                total_days=duration,
-                user_photo_url=user_photo_url
-            )
-        
-        video_tasks[video_id]["status"] = "processing"
-        video_tasks[video_id]["message"] = "Generating videos for each day..."
-        
-        def progress_callback(progress_data: Dict[str, Any]):
-            video_tasks[video_id].update({
-                "current_day": progress_data.get("current_day", 0),
-                "progress": progress_data.get("progress", 0),
-                "current_stage": progress_data.get("current_stage", "Processing..."),
-                "completed_days": progress_data.get("completed_days", 0),
-                "message": progress_data.get("current_stage", "Processing...")
-            })
-            
-            if video_db:
-                video_db.update_session(
-                    video_id=video_id,
-                    progress=progress_data.get("progress", 0),
-                    current_day=progress_data.get("current_day", 0),
-                    completed_days=progress_data.get("completed_days", 0),
-                    current_stage=progress_data.get("current_stage", "Processing...")
-                )
-        
-        result = await video_service.generate_full_itinerary_video(
-            user_image_url=user_photo_url,
-            destination=destination,
-            duration=duration,
-            daily_activities=daily_activities,
-            model="veo3_fast",
-            progress_callback=progress_callback,
-            video_id=video_id,
-            video_db=video_db
-        )
-        
-        if result.get("success"):
-            # Convert video to base64
-            video_path = result.get("video_path")
-            video_base64 = None
-            
-            if video_path and os.path.exists(video_path):
-                try:
-                    logger.info(f"📦 Converting video to base64: {video_path}")
-                    with open(video_path, "rb") as video_file:
-                        video_bytes = video_file.read()
-                        video_base64 = base64.b64encode(video_bytes).decode('utf-8')
-                    logger.info(f"✅ Video converted to base64 successfully")
-                except Exception as e:
-                    logger.error(f"❌ Error converting video to base64: {e}")
-            
-            video_tasks[video_id].update({
-                "status": "completed",
-                "progress": 100,
-                "itinerary_id": itinerary_id,  
-                "video_id": video_id, 
-                "completed_at": datetime.now().isoformat(),
-                "days_covered": result.get("days_covered", duration),
-                "message": "Video complete!",
-                "video_url": result.get("video_url"),
-                "video_path": result.get("video_path"),
-                "video_base64": video_base64
-            })
-            logger.info(f"✅ Video generation completed for {video_id}")
-        else:
-            video_tasks[video_id].update({
-                "status": "failed",
-                "error": result.get("error", "Unknown error"),
-                "itinerary_id": itinerary_id,
-                "video_id": video_id,
-                "message": f"Failed: {result.get('error', 'Unknown error')}"
-            })
-            logger.error(f"❌ Video generation failed for {video_id}")
-            
-    except Exception as e:
-        logger.error(f"❌ Error in background video generation: {e}")
-        traceback.print_exc()
-        video_tasks[video_id].update({
-            "status": "failed",
-            "error": str(e),
-            "itinerary_id": itinerary_id,
-            "video_id": video_id,
-            "message": f"Error: {str(e)}"
-        })
-
-# =============================================================================
-# Main Entry Point
-# =============================================================================
-
 if __name__ == "__main__":
     logger.info("🚀 Starting Travel Itinerary Generator API...")
-    logger.info("📡 Server will be available at: http://0.0.0.0:8001")
+    logger.info("📡 Server available at: http://0.0.0.0:8001")
     uvicorn.run(app, host="0.0.0.0", port=8001)
