@@ -272,6 +272,7 @@ class ItineraryService:
             "return_date": return_date.strftime("%B %d, %Y"),
             "trip_dates": trip_dates,
             "duration_days": duration,
+            "user_location": user_location,
             "destination": formatted_dest,
             "duration": duration,
             "travelers": travelers,
@@ -1783,7 +1784,7 @@ class ItineraryService:
         self,
         message: str,
         current_itinerary: Dict[str, Any],
-        conversation_history: List[Dict[str, str]]   # ignored — backend storage used
+        conversation_history: List[Dict[str, str]]   
     ) -> Dict[str, Any]:
         """
         Process chat message.
@@ -1805,7 +1806,7 @@ class ItineraryService:
             itinerary_id=itinerary_id,
             message=message,
             current_itinerary=current_itinerary,
-            conversation_history=None   # chatbot uses backend storage
+            conversation_history=None   
         )
 
         intent = result.get("intent")
