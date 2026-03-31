@@ -19,6 +19,7 @@ import tempfile
 import shutil
 import atexit
 import uuid
+import base64
 from typing import Dict, List, Optional, Any, Callable
 from moviepy.editor import VideoFileClip, concatenate_videoclips
 
@@ -49,7 +50,7 @@ atexit.register(cleanup_temp_directories)
 
 class VideoGenerationService:
     """Service for generating cinematic travel videos matching actual itinerary activities"""
-    
+
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key
         self.base_url = "https://api.kie.ai/api/v1/veo"
@@ -59,11 +60,11 @@ class VideoGenerationService:
             "Content-Type": "application/json"
         }
         self.temp_files: List[str] = []  # Track temp files for this instance
-    
+
     def _track_temp_file(self, filepath: str):
         """Track a temporary file for cleanup."""
         self.temp_files.append(filepath)
-    
+
     def cleanup_session_files(self):
         """Cleanup all temporary files created in this session."""
         for filepath in self.temp_files:
@@ -74,22 +75,22 @@ class VideoGenerationService:
             except Exception as e:
                 logger.warning(f"⚠️ Failed to remove {filepath}: {e}")
         self.temp_files.clear()
-    
+
     def upload_file_to_kie(self, local_file_path: str) -> Optional[str]:
         """Upload a local file to KIE AI and get a public URL."""
         try:
             if not os.path.exists(local_file_path):
                 logger.error(f"❌ File not found: {local_file_path}")
                 return None
-            
+
             filename = os.path.basename(local_file_path)
             logger.info(f"📤 Uploading file to KIE AI: {filename}")
-            
+
             with open(local_file_path, 'rb') as f:
                 files = {'file': (filename, f, 'image/jpeg')}
                 data = {'uploadPath': 'travel-videos'}
                 headers = {"Authorization": f"Bearer {self.api_key}"}
-                
+
                 response = requests.post(
                     f"{self.upload_base_url}/api/file-stream-upload",
                     headers=headers,
@@ -97,29 +98,29 @@ class VideoGenerationService:
                     data=data,
                     timeout=30
                 )
-            
+
             if not response.ok:
                 logger.error(f"❌ Upload failed: {response.status_code}")
                 return None
-            
+
             result = response.json()
-            
+
             if result.get("code") != 200:
                 logger.error(f"❌ Upload API error: {result.get('msg')}")
                 return None
-            
+
             data = result.get("data", {})
-            file_url = (data.get("downloadUrl") or data.get("url") or 
+            file_url = (data.get("downloadUrl") or data.get("url") or
                        data.get("fileUrl") or data.get("file_url"))
-            
+
             if file_url:
                 logger.info(f"✅ File uploaded: {file_url}")
             return file_url
-            
+
         except Exception as e:
             logger.error(f"❌ Upload exception: {e}")
             return None
-    
+
     async def generate_activity_matched_prompt(
         self,
         day_num: int,
@@ -196,12 +197,10 @@ class VideoGenerationService:
         The video should show SAFE, FAMILY-FRIENDLY, and LOCATION-APPROPRIATE activities only.
 
         0–0.8s | Day Intro Shot (Cinematic Title)
-        A short establishing shot of the location.
+        A short establishing shot of the location with a beautifully blurred background (shallow depth of field), creating a dreamy bokeh effect. The scene must be completely empty – no people visible at all.
         On-screen text: "{day_text}"
-        The text needs to be clearly visible but not obstructive and need to the same text as {day_text}.
-        Do NOT paraphrase, translate, stylize, or animate the text.
-        The travelers may appear briefly in frame or as a natural silhouette.
-        Camera: slow cinematic reveal (push-in, pull-back, or wide aerial-style angle).
+        The text must be clearly visible, centered, in an elegant font, without obstructing the view.
+        Camera: slow cinematic reveal (push-in, pull-back, or wide aerial-style angle) with the background softly blurred.
         Mood: curiosity, anticipation, calm excitement.
 
         0.8–3s | Morning – {morning_name} (Observational & Immersive)
@@ -245,8 +244,7 @@ class VideoGenerationService:
         """
 
         return prompt
-    
-    
+
     async def generate_full_itinerary_video(
         self,
         user_image_url: str,
@@ -256,18 +254,14 @@ class VideoGenerationService:
         video_id: Optional[str] = None,
         model: str = "veo3_fast",
         progress_callback: Optional[Callable] = None,
-        video_db: Optional[Any] = None
+        video_db: Optional[Any] = None   
     ) -> Dict[str, Any]:
         """
         Generate cinematic travel videos matching actual itinerary activities.
-        
-        Each day's 8-second video shows the person from the photo:
-        - At the actual morning location with appropriate mood
-        - Exploring the actual afternoon activity
-        - Enjoying the actual evening experience
-        
-        Style: Cinematic travel documentary with authentic emotional moments
-        
+
+        This method is now a pure async function; it does not start background tasks.
+        It returns the result directly. Progress updates are sent via callback.
+
         Args:
             user_image_url: URL or path to user's reference photo
             destination: Travel destination name
@@ -276,50 +270,48 @@ class VideoGenerationService:
             video_id: Unique identifier for this video generation
             model: AI model to use
             progress_callback: Optional callback for progress updates
-            video_db: Optional database interface
-            
+            video_db: Ignored (kept for backward compatibility)
+
         Returns:
             Dict with success status, video URL, and metadata
         """
-        
+
         # Enforce maximum days limit
         if duration > MAX_VIDEO_DAYS:
             logger.warning(f"⚠️ Duration {duration} exceeds max {MAX_VIDEO_DAYS}. Limiting to {MAX_VIDEO_DAYS} days.")
             duration = MAX_VIDEO_DAYS
-        
+
         # Generate video_id if not provided
         if not video_id:
             video_id = str(uuid.uuid4())[:8]
-        
+
         logger.info("="*80)
         logger.info("🎥 GENERATING CINEMATIC TRAVEL VIDEO")
         logger.info(f"📍 Destination: {destination}")
         logger.info(f"📅 Duration: {duration} days (max {MAX_VIDEO_DAYS})")
         logger.info(f"🆔 Video ID: {video_id}")
-        logger.info(f"🎬 Style: Cinematic with intelligent time allocation")
         logger.info("="*80)
-        
+
         # Upload user photo if localhost
         if user_image_url.startswith("http://localhost") or user_image_url.startswith("http://127.0.0.1"):
             logger.info("🔄 Uploading user photo...")
             filename = user_image_url.split("/uploads/", 1)[-1]
             local_path = f"uploads/{filename}"
-            
+
             public_url = self.upload_file_to_kie(local_path)
             if public_url:
                 user_image_url = public_url
-                # Track the local file for cleanup
                 self._track_temp_file(local_path)
             else:
                 return {"success": False, "error": "Failed to upload user photo"}
-        
+
         day_video_paths = []
-        
+
         for day_num in range(1, duration + 1):
             logger.info("="*60)
             logger.info(f"🎬 DAY {day_num} - Creating cinematic travel video")
             logger.info("="*60)
-            
+
             if progress_callback:
                 progress_callback({
                     "current_day": day_num,
@@ -328,17 +320,11 @@ class VideoGenerationService:
                     "current_stage": f"🎬 Creating Day {day_num} cinematic video...",
                     "completed_days": day_num - 1
                 })
-            
-            # Get THIS day's actual activities
+
+            # Get this day's actual activities
             day_idx = day_num - 1
             day_activities_data = daily_activities[day_idx] if day_idx < len(daily_activities) else {}
-            
-            # Log what activities we're visualizing
-            logger.info(f"📋 Activities to visualize cinematically:")
-            logger.info(f"   🌅 Morning: {day_activities_data.get('morning', {}).get('name', 'N/A')}")
-            logger.info(f"   ☀️ Afternoon: {day_activities_data.get('afternoon', {}).get('name', 'N/A')}")
-            logger.info(f"   🌙 Evening: {day_activities_data.get('evening', {}).get('name', 'N/A')}")
-            
+
             # Generate cinematic prompt
             try:
                 matched_prompt = await self.generate_activity_matched_prompt(
@@ -349,19 +335,10 @@ class VideoGenerationService:
                 )
             except Exception as e:
                 logger.error(f"❌ Error generating prompt: {e}")
-            
+                continue
+
             logger.info(f"📝 Cinematic Prompt: {matched_prompt[:500]}...")
-            
-            # Save to database
-            if video_db and video_id:
-                video_db.save_day_video(
-                    video_id=video_id,
-                    day_number=day_num,
-                    prompt=matched_prompt,
-                    photos=[user_image_url],
-                    status="processing"
-                )
-            
+
             # Generate video
             result = self._generate_video_with_images(
                 prompt=matched_prompt,
@@ -370,72 +347,44 @@ class VideoGenerationService:
                 destination=destination,
                 duration=1
             )
-            
+
             if not result["success"]:
                 logger.error(f"❌ Day {day_num} video failed: {result.get('error')}")
-                if video_db and video_id:
-                    video_db.save_day_video(
-                        video_id=video_id,
-                        day_number=day_num,
-                        status="failed",
-                        error_message=result.get('error')
-                    )
                 continue
-            
+
             task_id = result["task_id"]
             logger.info(f"⏳ Rendering Day {day_num} cinematic video...")
-            
-            if video_db and video_id:
-                video_db.save_day_video(
-                    video_id=video_id,
-                    day_number=day_num,
-                    task_id=task_id,
-                    status="processing"
-                )
-            
+
             video_result = self.wait_for_video(task_id, max_wait_time=600)
-            
+
             if not video_result["success"]:
                 logger.error(f"❌ Day {day_num} video failed: {video_result.get('error')}")
-                if video_db and video_id:
-                    video_db.save_day_video(
-                        video_id=video_id,
-                        day_number=day_num,
-                        status="failed",
-                        error_message=video_result.get('error')
-                    )
                 continue
-            
+
             video_url = video_result.get("video_url")
             if not video_url:
                 logger.error(f"❌ No video URL for Day {day_num}")
                 continue
-            
+
             # Save day video to temp directory
             output_filename = f"day_{day_num}_{destination.replace(' ', '_')}_{video_id}.mp4"
             output_path = os.path.join(TEMP_VIDEO_DIR, output_filename)
-            
+
             if self.download_video(video_url, output_path):
                 day_video_paths.append(output_path)
-                self._track_temp_file(output_path)  # Track for cleanup
+                self._track_temp_file(output_path)
                 logger.info(f"✅ Day {day_num} cinematic video ready!")
-                if video_db and video_id:
-                    video_db.save_day_video(
-                        video_id=video_id,
-                        day_number=day_num,
-                        video_url=video_url,
-                        local_path=output_path,
-                        status="completed"
-                    )
-        
+            else:
+                logger.error(f"❌ Failed to download Day {day_num} video")
+
         # Merge videos
         if not day_video_paths:
             return {"success": False, "error": "No day videos generated"}
-        
+
         logger.info("="*60)
         logger.info(f"🎬 Merging {len(day_video_paths)} day videos into final cinematic piece...")
         logger.info("="*60)
-        
+
         if progress_callback:
             progress_callback({
                 "current_day": duration,
@@ -444,18 +393,18 @@ class VideoGenerationService:
                 "current_stage": "🎞️ Creating your complete travel film...",
                 "completed_days": duration
             })
-        
+
         # Create videos directory if it doesn't exist
         videos_dir = "videos"
         os.makedirs(videos_dir, exist_ok=True)
-        
+
         # Final video naming: destination_videoid.mp4
         sanitized_destination = destination.replace(' ', '_').replace('/', '_').replace('\\', '_')
         final_video_filename = f"{sanitized_destination}_{video_id}.mp4"
         final_video_path = os.path.join(videos_dir, final_video_filename)
-        
+
         merge_success = self._merge_videos(day_video_paths, final_video_path)
-        
+
         # Cleanup day videos (they're temporary)
         for temp_path in day_video_paths:
             try:
@@ -464,20 +413,16 @@ class VideoGenerationService:
                     logger.info(f"🧹 Cleaned up temp day video: {temp_path}")
             except Exception as e:
                 logger.warning(f"⚠️ Failed to cleanup {temp_path}: {e}")
-        
+
         if not merge_success:
             return {"success": False, "error": "Failed to merge videos"}
-        
-        # Track final video for session cleanup
-        self._track_temp_file(final_video_path)
-        
+
         logger.info("="*80)
         logger.info(f"🎉 YOUR CINEMATIC TRAVEL VIDEO IS COMPLETE!")
         logger.info(f"📁 Path: {final_video_path}")
         logger.info(f"📅 {len(day_video_paths)} days of cinematic travel content")
-        logger.info(f"⚠️ Note: Video will be auto-cleaned after session ends")
         logger.info("="*80)
-        
+
         if progress_callback:
             progress_callback({
                 "current_day": duration,
@@ -486,7 +431,13 @@ class VideoGenerationService:
                 "current_stage": "🎬 Your cinematic travel video is ready!",
                 "completed_days": duration
             })
-        
+
+        # Optionally encode video to base64 for immediate delivery
+        video_base64 = None
+        if os.path.exists(final_video_path):
+            with open(final_video_path, "rb") as f:
+                video_base64 = base64.b64encode(f.read()).decode('utf-8')
+
         return {
             "success": True,
             "video_url": f"/videos/{final_video_filename}",
@@ -495,7 +446,8 @@ class VideoGenerationService:
             "days_covered": len(day_video_paths),
             "total_days": duration,
             "status": "completed",
-            "temporary": True  # Indicates video will be cleaned up
+            "video_base64": video_base64,
+            "temporary": True
         }
     
     def _generate_video_with_images(
@@ -518,7 +470,7 @@ class VideoGenerationService:
                 "enableFallback": True,
                 "personGeneration": "allow_adult",
                 "generateAudio": False,
-                "negativePrompt": "different person, inconsistent face, static pose, fake smile, tourist posing, blank expression, bored look, mannequin, doll, plastic look, text overlay, watermark, logo, blurry, shaky camera, bad lighting, cartoon, animation, frozen frame, slow motion, dull colors"
+                "negativePrompt": "different person, inconsistent face, static pose, fake smile, tourist posing, blank expression, bored look, mannequin, doll, plastic look, text overlay, watermark, logo, blurry, shaky camera, bad lighting, cartoon, animation, frozen frame, slow motion, dull colors, celebrity, famous person, politician, actor, public figure"
             }
             
             logger.info(f"🔧 Generating cinematic video with reference person...")
@@ -639,35 +591,92 @@ class VideoGenerationService:
             return False
     
     def _merge_videos(self, video_paths: List[str], output_path: str) -> bool:
-        """Merge day videos with smooth transitions."""
+        """Merge day videos with smooth transitions and validate output."""
+        clips = []
         try:
-            
-            clips = [VideoFileClip(p) for p in video_paths]
+            # First, load and validate each clip
+            for i, path in enumerate(video_paths):
+                if not os.path.exists(path):
+                    logger.error(f"❌ Day {i+1} video file missing: {path}")
+                    return False
+
+                file_size = os.path.getsize(path)
+                if file_size < 10 * 1024:
+                    logger.error(f"❌ Day {i+1} video file too small ({file_size} bytes): {path}")
+                    return False
+
+                try:
+                    clip = VideoFileClip(path)
+                    if clip.duration <= 0:
+                        logger.error(f"❌ Day {i+1} video has zero duration: {path}")
+                        clip.close()
+                        return False
+                    logger.info(f"✅ Loaded day {i+1} video: {path} ({file_size} bytes, {clip.duration:.2f}s, {clip.fps}fps, {clip.size})")
+                    clips.append(clip)
+                except Exception as e:
+                    logger.error(f"❌ Failed to load {path}: {e}", exc_info=True)
+                    return False
+
+            if not clips:
+                logger.error("❌ No valid clips to merge")
+                return False
+
+            # Check that all clips have the same fps and resolution
+            fps = clips[0].fps
+            size = clips[0].size
+            for idx, clip in enumerate(clips[1:], start=2):
+                if clip.fps != fps:
+                    logger.warning(f"⚠️ Day {idx} fps ({clip.fps}) differs from first clip ({fps}) – may cause sync issues.")
+                if clip.size != size:
+                    logger.warning(f"⚠️ Day {idx} resolution {clip.size} differs from first clip {size} – will be resized automatically.")
+
+            logger.info(f"🎬 Merging {len(clips)} clips...")
             final_clip = concatenate_videoclips(clips, method="compose")
-            
+
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            
+
             final_clip.write_videofile(
                 output_path,
                 codec='libx264',
                 audio_codec='aac',
                 temp_audiofile='temp-audio.m4a',
                 remove_temp=True,
-                fps=24
+                fps=fps,              
+                preset='medium',
+                threads=2,
+                logger=None
             )
-            
+
+            # Validate final video duration
+            final_duration = final_clip.duration
+            expected_duration = sum(clip.duration for clip in clips)
+            logger.info(f"✅ Final video duration: {final_duration:.2f}s (expected: {expected_duration:.2f}s)")
+
+            if abs(final_duration - expected_duration) > 0.5:
+                logger.error(f"❌ Final video duration mismatch: {final_duration:.2f}s vs {expected_duration:.2f}s")
+                # Optionally, we could still return True but warn
+            else:
+                logger.info("✅ Duration matches expected.")
+
             final_clip.close()
             for clip in clips:
                 clip.close()
-            
+
             if os.path.exists(output_path):
-                logger.info(f"✅ Final cinematic video: {output_path}")
+                logger.info(f"✅ Final cinematic video saved: {output_path}")
                 return True
             return False
-            
+
         except Exception as e:
-            logger.error(f"❌ Merge failed: {e}")
+            logger.error(f"❌ Merge failed: {e}", exc_info=True)
             return False
+        finally:
+            # Ensure all clips are closed even on error
+            for clip in clips:
+                try:
+                    clip.close()
+                except:
+                    pass
     
     def __del__(self):
         """Cleanup on instance destruction."""
