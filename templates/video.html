@@ -178,30 +178,11 @@
     <script>
         const videoId = "{{ video_id }}";
         let pollingInterval = null;
-        let ws = null;
-        
-        // Initialize
+
         document.addEventListener('DOMContentLoaded', () => {
-            connectWebSocket();
             startPolling();
         });
-        
-        // WebSocket connection for real-time updates
-        function connectWebSocket() {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${window.location.host}/ws/video-progress/${videoId}`);
-            
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                updateUI(data);
-            };
-            
-            ws.onclose = () => {
-                console.log('WebSocket closed, relying on polling');
-            };
-        }
-        
-        // Polling fallback
+
         function startPolling() {
             pollingInterval = setInterval(async () => {
                 try {
@@ -219,8 +200,7 @@
                 }
             }, 3000);
         }
-        
-        // Update UI based on status
+
         function updateUI(data) {
             // Update progress bar
             const progress = data.progress || 0;
@@ -247,8 +227,7 @@
                 }
             }
         }
-        
-        // Create day cards
+
         function updateDayCards(totalDays, currentDay, completedDays) {
             const grid = document.getElementById('days-grid');
             
@@ -296,49 +275,38 @@
                 }
             }
         }
-        
-        // Show video player when complete
+
         function showVideoPlayer(data) {
-            // Hide processing state
             document.getElementById('processing-state').classList.add('hidden');
             document.getElementById('error-state').classList.add('hidden');
             
-            // Show video player
             const playerContainer = document.getElementById('video-player-container');
             playerContainer.classList.remove('hidden');
             
-            // Set video source
             const videoSource = document.getElementById('video-source');
             const videoPlayer = document.getElementById('video-player');
             videoSource.src = data.video_url;
             videoPlayer.load();
             
-            // Show video info
             document.getElementById('video-info').classList.remove('hidden');
             
-            // Update info
             const duration = data.duration_seconds || 0;
             document.getElementById('info-duration').textContent = `${Math.round(duration)} seconds`;
             document.getElementById('info-days').textContent = `${data.days_covered || 0} of ${data.total_days || 0}`;
             document.getElementById('info-created').textContent = new Date().toLocaleDateString();
             
-            // Set download link
             document.getElementById('download-btn').href = data.video_url;
             
-            // Update all day cards to complete
             updateDayCards(data.total_days, data.total_days + 1, data.total_days);
         }
-        
-        // Show error state
+
         function showError(errorMsg) {
             document.getElementById('processing-state').classList.add('hidden');
             document.getElementById('video-player-container').classList.add('hidden');
-            
             document.getElementById('error-state').classList.remove('hidden');
             document.getElementById('error-message').textContent = errorMsg || 'An unexpected error occurred.';
         }
-        
-        // Share video
+
         function shareVideo() {
             if (navigator.share) {
                 navigator.share({
@@ -347,7 +315,6 @@
                     url: window.location.href
                 });
             } else {
-                // Fallback - copy to clipboard
                 navigator.clipboard.writeText(window.location.href);
                 alert('Link copied to clipboard!');
             }
