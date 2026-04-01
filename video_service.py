@@ -196,14 +196,39 @@ class VideoGenerationService:
 
         The video should show SAFE, FAMILY-FRIENDLY, and LOCATION-APPROPRIATE activities only.
 
-        0–0.8s | Day Intro Shot (Cinematic Title)
-        A short establishing shot of the location with a beautifully blurred background (shallow depth of field), creating a dreamy bokeh effect. The scene must be completely empty – no people visible at all.
-        On-screen text: "{day_text}"
-        The text must be clearly visible, centered, in an elegant font, without obstructing the view.
-        Camera: slow cinematic reveal (push-in, pull-back, or wide aerial-style angle) with the background softly blurred.
-        Mood: curiosity, anticipation, calm excitement.
+        0.0–1.0s | TITLE CARD (TEXT-ONLY FRAME)
+        HARD RULE:
+        This segment is a CLEAN TITLE CARD, NOT a cinematic scene.
 
-        0.8–3s | Morning – {morning_name} (Observational & Immersive)
+        - Solid or lightly blurred neutral background ONLY
+        - NO environment details
+        - NO depth of field effects
+        - NO camera motion
+        - NO objects
+        - NO people
+
+        TEXT (CRITICAL):
+        Render EXACT string:
+        "{day_text}"
+
+        STRICT:
+        - Exact match (character-by-character)
+        - No extra text
+        - No paraphrasing
+        - No styling changes
+
+        STYLE:
+        - Centered
+        - Large, bold sans-serif
+        - High contrast
+        - Completely static (no animation, no fade, no motion)
+
+        FAIL IF:
+        - Any extra words appear
+        - Text is incorrect
+        - Background is complex
+
+        1.0–3s | Morning – {morning_name} (Observational & Immersive)
         The SAME group of travelers {morning_desc}, engaging with the environment in a location-aware way:
         - observing architecture, landscapes, or cultural details
         - pausing to admire views, signage, or surroundings
