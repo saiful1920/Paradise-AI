@@ -1,31 +1,86 @@
-version: '3.9'
 
 services:
-  travel-itinerary-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: travel-itinerary-api
+  web:
+    build: .
+    container_name: travel-itinerary-web
+    restart: unless-stopped
     ports:
       - "8001:8001"
     env_file:
       - .env
     environment:
-      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      # Override localhost → service names for Docker internal networking
+      - DATABASE_URL=postgresql+asyncpg://travel_user:secure_password@db:5432/travel_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - INTERNAL_API_BASE=http://web:8001   # use service name
     volumes:
-      # Persist uploaded files and generated videos
       - ./uploads:/app/uploads
       - ./videos:/app/videos
-      
-    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/api/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
 
-# Optional: Add volumes for persistent data
+  celery:
+    build: .
+    container_name: travel-itinerary-celery
+    command: celery -A src.core.tasks.celery_app worker --loglevel=info --pool=solo
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+      - DATABASE_URL=postgresql+asyncpg://travel_user:secure_password@db:5432/travel_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - INTERNAL_API_BASE=http://web:8001   # use service name
+    volumes:
+      - ./uploads:/app/uploads
+      - ./videos:/app/videos
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+
+  db:
+    image: postgres:15
+    container_name: travel-itinerary-db
+    environment:
+      - POSTGRES_USER=travel_user
+      - POSTGRES_PASSWORD=secure_password
+      - POSTGRES_DB=travel_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"   # optional: for local DB access from host
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U travel_user -d travel_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: travel-itinerary-redis
+    ports:
+      - "6380:6379"   # optional
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
-  uploads:
-  videos:
+  postgres_data:
