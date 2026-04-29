@@ -1251,8 +1251,9 @@ class ItineraryService:
             if item.get("location"):
                 lat = item["location"].get("lat")
                 lng = item["location"].get("lng")
+                name = item.get("name", "location").replace(" ", "+")
                 if lat and lng:
-                    item["maps_link"] = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+                    item["maps_link"] = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}+({name})"
         
         return {
             "tours": {
@@ -1365,8 +1366,9 @@ class ItineraryService:
             if hotel.get("location"):
                 lat = hotel["location"].get("lat")
                 lng = hotel["location"].get("lng")
+                name = hotel.get("name", "hotel").replace(" ", "+")
                 if lat and lng:
-                    hotel_data["maps_link"] = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+                    hotel_data["maps_link"] = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}+({name})"
             
             result.append(hotel_data)
         
@@ -1391,8 +1393,9 @@ class ItineraryService:
             if r.get("location"):
                 lat = r["location"].get("lat")
                 lng = r["location"].get("lng")
+                name = r.get("name", "restaurant").replace(" ", "+")
                 if lat and lng:
-                    restaurant_data["maps_link"] = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+                    restaurant_data["maps_link"] = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}+({name})"
             
             result.append(restaurant_data)
         
